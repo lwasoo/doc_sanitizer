@@ -20,6 +20,9 @@ echo "[INFO] Building macOS app bundle with PyInstaller..."
   --clean \
   --windowed \
   --name "$APP_NAME" \
+  --hidden-import rapidocr_onnxruntime \
+  --collect-all rapidocr_onnxruntime \
+  --collect-all onnxruntime \
   --add-data "docx_to_ppt_converter.py:." \
   --add-data "report_converter:report_converter" \
   gui_converter.py

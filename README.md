@@ -24,7 +24,7 @@ python .\docx_to_ppt_converter.py `
   --model "qwen2.5:14b-instruct-q4_K_M" `
   --layout-mode formal `
   --theme formal_blue `
-  --diversity high `
+  --diversity none `
   --seed 7
 ```
 
@@ -36,7 +36,7 @@ python .\docx_to_ppt_converter.py `
 - `--no-llm`：关闭模型，只用规则匹配与改写
 - `--layout-mode`：内容排版模式（`classic`/`formal`，默认 `classic`）
 - `--theme`：正式布局主题（`formal_blue`/`corporate_gray`/`legal_red`）
-- `--diversity`：版式多样化程度（`low`/`medium`/`high`）
+- `--diversity`：版式多样化程度（`none`/`low`/`medium`/`high`，其中 `none` 为不套用多样化布局）
 - `--seed`：版式随机种子（同 seed 可复现）
 
 ## 4) 实现原理

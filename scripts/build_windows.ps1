@@ -23,6 +23,9 @@ Write-Host "[INFO] Building Windows EXE with PyInstaller..."
   --onefile `
   --windowed `
   --name $AppName `
+  --hidden-import rapidocr_onnxruntime `
+  --collect-all rapidocr_onnxruntime `
+  --collect-all onnxruntime `
   --add-data "docx_to_ppt_converter.py;." `
   --add-data "report_converter;report_converter" `
   gui_converter.py

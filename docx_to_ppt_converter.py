@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--layout-mode",
         choices=["classic", "formal"],
-        default="classic",
+        default="formal",
         help="PPT content layout mode (title is always preserved)",
     )
     parser.add_argument(
@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--diversity",
-        choices=["low", "medium", "high"],
+        choices=["none", "low", "medium", "high"],
         default="medium",
         help="Layout variety level for formal mode",
     )
