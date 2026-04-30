@@ -366,21 +366,6 @@ bash ./scripts/build_macos.sh
 - [gui_app/sanitize_tab.py](C:/Users/vegta/Desktop/month_report_convert/gui_app/sanitize_tab.py)：脱敏页签
 - [gui_app/restore_tab.py](C:/Users/vegta/Desktop/month_report_convert/gui_app/restore_tab.py)：还原页签
 
-## Wiki
-
-仓库内已准备 Wiki 初稿目录：
-- `docs/wiki/`
-
-你可以：
-1. 先在本仓库里维护这些 Markdown
-2. 再同步到 GitHub Wiki 仓库
-
-GitHub Wiki 是一个单独的 git 仓库，通常地址类似：
-
-```text
-https://github.com/<owner>/<repo>.wiki.git
-```
-
 ## 当前已知限制
 
 - OCR 数字提取仍可能需要人工复核
