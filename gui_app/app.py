@@ -24,6 +24,7 @@ from tkinter.scrolledtext import ScrolledText
 from .about_tab import AboutTabMixin
 from .convert_tab import ConvertTabMixin
 from .defaults import APP_DISPLAY_NAME, APP_VERSION, DEFAULT_MODEL, DEFAULT_OLLAMA_URL
+from .prompt_tab import PromptTabMixin
 from .restore_tab import RestoreTabMixin
 from .sanitize_tab import SanitizeTabMixin
 from office_conversion import LIBREOFFICE_DOWNLOAD_URL, OfficeConversionError
@@ -41,7 +42,7 @@ def configure_windows_dpi() -> None:
             pass
 
 
-class ConverterGUI(ConvertTabMixin, SanitizeTabMixin, RestoreTabMixin, AboutTabMixin):
+class ConverterGUI(ConvertTabMixin, SanitizeTabMixin, RestoreTabMixin, PromptTabMixin, AboutTabMixin):
     def __init__(self, root: tk.Tk, geometry: str | None = None) -> None:
         self.root = root
         self.root.title(f"{APP_DISPLAY_NAME} v{APP_VERSION}")
@@ -180,15 +181,18 @@ class ConverterGUI(ConvertTabMixin, SanitizeTabMixin, RestoreTabMixin, AboutTabM
         convert_tab = ttk.Frame(notebook, style="App.TFrame", padding=6)
         sanitize_tab = ttk.Frame(notebook, style="App.TFrame", padding=6)
         restore_tab = ttk.Frame(notebook, style="App.TFrame", padding=6)
+        prompt_tab = ttk.Frame(notebook, style="App.TFrame", padding=6)
         about_tab = ttk.Frame(notebook, style="App.TFrame", padding=6)
         notebook.add(convert_tab, text="月报转 PPT")
         notebook.add(sanitize_tab, text="脱敏")
         notebook.add(restore_tab, text="还原")
+        notebook.add(prompt_tab, text="AI Prompt")
         notebook.add(about_tab, text="关于")
 
         self._build_convert_tab(convert_tab)
         self._build_sanitize_tab(sanitize_tab)
         self._build_restore_tab(restore_tab)
+        self._build_prompt_tab(prompt_tab)
         self._build_about_tab(about_tab)
 
     def _create_log_widget(self, parent: ttk.Frame) -> ScrolledText:
@@ -384,6 +388,14 @@ class ConverterGUI(ConvertTabMixin, SanitizeTabMixin, RestoreTabMixin, AboutTabM
         )
         if open_page:
             webbrowser.open(LIBREOFFICE_DOWNLOAD_URL)
+
+    def _open_path_in_file_manager(self, path: Path) -> None:
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)])
+        else:
+            webbrowser.open(str(path.parent))
 
     def _resolve_script(self, script_name: str) -> Path | None:
         local = Path(__file__).resolve().parent.parent / script_name

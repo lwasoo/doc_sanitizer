@@ -13,6 +13,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from office_conversion import convert_from_ooxml, convert_to_ooxml
 from report_converter.common import log, normalize_text
+from .fuzzy_mapping import repair_placeholder_text
 from .mapping import ReplacementItem, mapping_entries, read_mapping, write_mapping_data
 
 SUPPORTED_FILE_SUFFIXES = {".doc", ".docx", ".ppt", ".pptx"}
@@ -142,25 +143,40 @@ def iter_ppt_shape_paragraphs(shape):
             yield paragraph
 
 
-def apply_replacements_to_doc(doc: Document, items: list[ReplacementItem], reverse: bool = False) -> None:
+def apply_replacements_to_doc(
+    doc: Document,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> None:
     ordered = sorted(items, key=lambda item: len(item.placeholder if reverse else item.original), reverse=True)
     for paragraph in iter_doc_paragraphs(doc):
-        replace_in_doc_paragraph(paragraph, ordered, reverse=reverse)
+        replace_in_doc_paragraph(paragraph, ordered, reverse=reverse, placeholder_repairs=placeholder_repairs)
 
 
-def apply_replacements_to_ppt(prs: Presentation, items: list[ReplacementItem], reverse: bool = False) -> None:
+def apply_replacements_to_ppt(
+    prs: Presentation,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> None:
     ordered = sorted(items, key=lambda item: len(item.placeholder if reverse else item.original), reverse=True)
     for paragraph in iter_ppt_paragraphs(prs):
-        replace_in_ppt_paragraph(paragraph, ordered, reverse=reverse)
+        replace_in_ppt_paragraph(paragraph, ordered, reverse=reverse, placeholder_repairs=placeholder_repairs)
 
 
-def replace_in_doc_paragraph(paragraph, items: list[ReplacementItem], reverse: bool = False) -> None:
+def replace_in_doc_paragraph(
+    paragraph,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> None:
     source = paragraph.text or ""
     if not source:
         return
-    if replace_in_runs(paragraph.runs, items, reverse=reverse):
+    if replace_in_runs(paragraph.runs, items, reverse=reverse, placeholder_repairs=placeholder_repairs):
         return
-    updated = replace_text(source, items, reverse=reverse)
+    updated = replace_text(source, items, reverse=reverse, placeholder_repairs=placeholder_repairs)
     if updated == source:
         return
     if len(paragraph.runs) == 1:
@@ -174,14 +190,19 @@ def replace_in_doc_paragraph(paragraph, items: list[ReplacementItem], reverse: b
     paragraph.add_run(updated)
 
 
-def replace_in_ppt_paragraph(paragraph, items: list[ReplacementItem], reverse: bool = False) -> None:
+def replace_in_ppt_paragraph(
+    paragraph,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> None:
     source = paragraph.text or ""
     if not source:
         return
     runs = list(paragraph.runs)
-    if replace_in_runs(runs, items, reverse=reverse):
+    if replace_in_runs(runs, items, reverse=reverse, placeholder_repairs=placeholder_repairs):
         return
-    updated = replace_text(source, items, reverse=reverse)
+    updated = replace_text(source, items, reverse=reverse, placeholder_repairs=placeholder_repairs)
     if updated == source:
         return
     if len(runs) == 1:
@@ -195,8 +216,13 @@ def replace_in_ppt_paragraph(paragraph, items: list[ReplacementItem], reverse: b
     paragraph.text = updated
 
 
-def replace_text(text: str, items: list[ReplacementItem], reverse: bool = False) -> str:
-    updated = text
+def replace_text(
+    text: str,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> str:
+    updated = repair_placeholder_text(text, items, confirmed_repairs=placeholder_repairs) if reverse else text
     for item in items:
         old = item.placeholder if reverse else item.original
         new = item.original if reverse else item.placeholder
@@ -205,13 +231,20 @@ def replace_text(text: str, items: list[ReplacementItem], reverse: bool = False)
     return updated
 
 
-def replace_in_runs(runs, items: list[ReplacementItem], reverse: bool = False) -> bool:
+def replace_in_runs(
+    runs,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> bool:
     run_list = list(runs)
     if not run_list:
         return False
     texts = [run.text or "" for run in run_list]
     source = "".join(texts)
     if not source:
+        return False
+    if reverse and placeholder_repairs:
         return False
 
     char_runs: list[int] = []
@@ -244,7 +277,12 @@ def replace_in_runs(runs, items: list[ReplacementItem], reverse: bool = False) -
     return True
 
 
-def apply_replacements_to_docx_package(path: Path, items: list[ReplacementItem], reverse: bool = False) -> None:
+def apply_replacements_to_docx_package(
+    path: Path,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> None:
     if not items:
         return
     temp_path = path.with_name(f"{path.stem}.tmp{path.suffix}")
@@ -258,7 +296,7 @@ def apply_replacements_to_docx_package(path: Path, items: list[ReplacementItem],
                 except UnicodeDecodeError:
                     text = ""
                 if text:
-                    updated = replace_xml_text(text, items, reverse=reverse)
+                    updated = replace_xml_text(text, items, reverse=reverse, placeholder_repairs=placeholder_repairs)
                     if updated != text:
                         data = updated.encode("utf-8")
                         changed_any = True
@@ -269,8 +307,13 @@ def apply_replacements_to_docx_package(path: Path, items: list[ReplacementItem],
         temp_path.unlink(missing_ok=True)
 
 
-def replace_xml_text(xml_text: str, items: list[ReplacementItem], reverse: bool = False) -> str:
-    updated = xml_text
+def replace_xml_text(
+    xml_text: str,
+    items: list[ReplacementItem],
+    reverse: bool = False,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> str:
+    updated = repair_placeholder_text(xml_text, items, confirmed_repairs=placeholder_repairs) if reverse else xml_text
     for item in items:
         old = item.placeholder if reverse else item.original
         new = item.original if reverse else item.placeholder
@@ -317,7 +360,12 @@ def apply_mapping_to_file(
         write_mapping_data(mapping_path, payload)
 
 
-def restore_file(input_path: Path, output_path: Path, mapping_path: Path) -> None:
+def restore_file(
+    input_path: Path,
+    output_path: Path,
+    mapping_path: Path,
+    placeholder_repairs: dict[str, str] | None = None,
+) -> None:
     ensure_supported_path(input_path)
     payload = read_mapping(mapping_path)
     items = mapping_entries(payload, only_enabled=False)
@@ -328,20 +376,20 @@ def restore_file(input_path: Path, output_path: Path, mapping_path: Path) -> Non
             work_dir = Path(td)
             converted_input = convert_to_ooxml(input_path, work_dir)
             temp_output = work_dir / f"{output_path.stem}{converted_input.suffix.lower()}"
-            restore_file(converted_input, temp_output, mapping_path)
+            restore_file(converted_input, temp_output, mapping_path, placeholder_repairs=placeholder_repairs)
             convert_from_ooxml(temp_output, output_path)
         log(f"还原完成: {output_path}")
         return
 
     if input_path.suffix.lower() == ".docx":
         doc = Document(str(input_path))
-        apply_replacements_to_doc(doc, items, reverse=True)
+        apply_replacements_to_doc(doc, items, reverse=True, placeholder_repairs=placeholder_repairs)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(output_path))
-        apply_replacements_to_docx_package(output_path, items, reverse=True)
+        apply_replacements_to_docx_package(output_path, items, reverse=True, placeholder_repairs=placeholder_repairs)
     else:
         prs = Presentation(str(input_path))
-        apply_replacements_to_ppt(prs, items, reverse=True)
+        apply_replacements_to_ppt(prs, items, reverse=True, placeholder_repairs=placeholder_repairs)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         prs.save(str(output_path))
     log(f"还原完成: {output_path}")

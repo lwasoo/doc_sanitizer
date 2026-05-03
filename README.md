@@ -1,404 +1,254 @@
 # 文件工具箱
 
-把法务月报 `Word(.doc/.docx)` 转成模板 `PPT(.ppt/.pptx)`，并支持 `Word / PPT` 的脱敏与还原。
+文件工具箱用于处理 Word / PPT 文档，主要适合需要整理材料、脱敏后交给外部 AI、再把占位符还原回原文的场景。
 
-当前包含 3 个主要功能：
-- `月报转 PPT`：把月报 Word 填进固定 PPT 模板
-- `文档脱敏`：把敏感词替换成占位符，方便交给外部 AI 继续处理
-- `文档还原`：把占位符恢复成原始敏感词
+当前包含：
+- `月报转 PPT`：把 Word 内容整理进 PPT 模板
+- `脱敏`：把敏感信息替换成占位符
+- `还原`：把占位符恢复成原始敏感信息
+- `AI Prompt`：根据映射 JSON 生成给外部 AI 使用的提示词
+- `关于`：查看版本、检测更新、下载更新包
 
-当前原生处理 `.docx` / `.pptx`。`.doc` / `.ppt` 属于旧版二进制 Office 格式，程序会通过 LibreOffice 先临时转换为 `.docx` / `.pptx` 再处理。
+## 重要提示
 
-如果需要处理 `.doc` / `.ppt`，请先安装 LibreOffice：
-- Windows：`winget install --id TheDocumentFoundation.LibreOffice -e`
-- macOS：`brew install --cask libreoffice`
-- 官网下载：[LibreOffice](https://www.libreoffice.org/download/download-libreoffice/)
+本工具只能辅助处理文档，不能保证 100% 消除保密、隐私、商业秘密或合规风险。
 
-如果当前环境没有 LibreOffice，仍然可以稳定处理 `.docx` / `.pptx`。
+文档格式、图片 OCR、本地模型识别、外部 AI 改写和人工编辑都可能造成遗漏或误判。对外发送、上传第三方系统、交给外部 AI 处理或正式归档前，请务必人工复核。
 
-## 重要提示与免责声明
+## 支持格式
 
-本工具用于辅助法务月报整理、文档脱敏和文档还原，不能替代人工合规审核。由于源文件格式、图片 OCR、规则识别、本地模型识别、外部 AI 改写和人工编辑都可能产生遗漏、误判或占位符损坏，本工具无法保证 100% 去除数据保密、隐私保护、商业秘密或其他合规风险。
+推荐使用：
+- Word：`.docx`
+- PowerPoint：`.pptx`
 
-对外发送、上传至第三方系统、交给外部 AI 处理或正式归档前，请务必由业务/法务/合规人员进行人工复核。使用者应自行判断输出文件是否符合所在组织的数据安全、保密和合规要求。
+也支持旧格式：
+- Word：`.doc`
+- PowerPoint：`.ppt`
 
-## 快速选择
+如果要处理 `.doc` / `.ppt`，电脑需要安装 LibreOffice。没有 LibreOffice 时，`.docx` / `.pptx` 仍然可以正常使用。
 
-### 我是直接下载 Release 的用户
+LibreOffice 下载：
+- Windows 可使用：`winget install --id TheDocumentFoundation.LibreOffice -e`
+- macOS 可使用：`brew install --cask libreoffice`
+- 官网：[LibreOffice 下载页](https://www.libreoffice.org/download/download-libreoffice/)
 
-你需要准备：
-- Windows 或 macOS
-- [Ollama](https://ollama.com/download)
-- 至少一个本地模型，例如：
+## 第一次使用前
 
-```powershell
-ollama pull qwen2.5:7b-instruct-q4_K_M
-```
+如果你只是使用 Release 里的客户端，不需要安装 Python，也不需要看代码。
 
-你**不需要**准备：
-- Python
-- `pip`
-- 源码运行依赖
-- 打包依赖
+建议准备：
+- Windows 或 macOS 电脑
+- Ollama，用于本地模型辅助识别和改写
+- 一个本地模型，例如 `qwen2.5:7b-instruct-q4_K_M`
 
-直接下载 Release 里的可执行文件后运行即可。
-
-### 我是从源码运行 / 开发的用户
-
-你需要准备：
-- Python `3.10+`
-- `pip`
-- [Ollama](https://ollama.com/download)（如果要启用本地模型）
-- 本仓库源码
-
-安装运行依赖：
-
-```powershell
-python -m pip install -r .\requirements.txt
-```
-
-如果还要本地打包，再安装：
-
-```powershell
-python -m pip install -r .\requirements-build.txt
-```
-
-## Prerequisites
-
-### 1. Ollama
-
-如果你要使用：
-- 月报转 PPT 的模型改写
-- 脱敏页的本地模型辅助识别
-
-就需要安装并启动 `Ollama`。
-
-下载：
-- [Ollama 官网](https://ollama.com/download)
-
-安装后确认：
-
-```powershell
-ollama list
-```
-
-### 2. 模型目录不是默认路径时
-
-如果你的模型在自定义目录，例如 `D:\Ollama\models`，需要设置：
-
-```powershell
-[Environment]::SetEnvironmentVariable('OLLAMA_MODELS', 'D:\Ollama\models', 'User')
-```
-
-然后完全重启 Ollama。
-
-### 3. 推荐模型
-
-至少准备一个：
+安装 Ollama 后，可以在命令行执行：
 
 ```powershell
 ollama pull qwen2.5:7b-instruct-q4_K_M
 ```
 
-如果机器配置更高，也可以使用：
+如果不使用本地模型，部分功能仍然可以用规则模式运行，但识别效果会更依赖人工检查。
 
-```powershell
-ollama pull qwen2.5:14b-instruct-q4_K_M
-```
+## 基本流程
 
-## 启动 GUI
+最常见的外部 AI 协作流程是：
 
-源码运行：
-
-```powershell
-python .\gui_converter.py
-```
-
-按指定窗口尺寸模拟：
-
-```powershell
-python .\gui_converter.py --geometry 1366x768
-python .\gui_converter.py --geometry 1440x900
-```
-
-GUI 当前包含 4 个页签：
-- `月报转 PPT`
-- `脱敏`
-- `还原`
-- `关于`
-
-启动后会自动静默检测 GitHub Release 是否有新版本；也可以在 `关于` 页签里手动点击 `检测更新`。检测到新版本时，程序会打开 Release 下载页面，不会直接覆盖正在运行的客户端。
+1. 在 `脱敏` 页选择原始 Word / PPT。
+2. 点击 `识别候选映射`。
+3. 在右侧映射表里人工检查、删除误识别、补充漏识别。
+4. 点击 `生成脱敏文档`，得到脱敏文件和映射 JSON。
+5. 在 `AI Prompt` 页载入映射 JSON，生成并复制给外部 AI 的提示词。
+6. 把脱敏文档交给外部 AI 处理。
+7. 在 `还原` 页选择 AI 修改后的文件和映射 JSON，生成还原后的文档。
+8. 人工复核最终文件。
 
 ## 月报转 PPT
 
-### GUI 用法
+打开 `月报转 PPT` 页，依次选择：
+- 原始 Word 文件
+- PPT 模板
+- 输出 PPT 路径
+- 本地模型
 
-在 `月报转 PPT` 页签中填写：
-- 原始 `docx`
-- 模板 `pptx`
-- 输出 `pptx`
-- 模型名
+然后点击 `开始转换`。
 
-然后点击“开始转换”。
+需要注意：
+- 工具会尽量保持模板标题和版式
+- 内容放不下时会自动续页
+- 生成后仍建议人工检查页码、表格、标题和重点内容
 
-### CLI 用法
+## 脱敏
 
-```powershell
-python .\docx_to_ppt_converter.py `
-  --docx "C:\input.docx" `
-  --template "C:\template.pptx" `
-  --output "C:\output.pptx" `
-  --model "qwen2.5:14b-instruct-q4_K_M" `
-  --layout-mode formal `
-  --theme formal_blue `
-  --diversity none `
-  --seed 7
-```
+打开 `脱敏` 页，依次选择：
+- 原始文件
+- 脱敏输出路径
+- 映射 JSON 输出路径
 
-### 常用参数
+推荐操作：
+1. 点击 `识别候选映射`。
+2. 在右侧映射表里逐项检查。
+3. 删除明显误识别的内容。
+4. 手工补充漏掉的重要名称、项目、客户、人员等。
+5. 点击 `生成脱敏文档`。
 
-- `--ollama-url`：默认 `http://127.0.0.1:11434`
-- `--timeout`：默认 `180`
-- `--retries`：默认 `2`
-- `--no-llm`：关闭模型，只用规则模式
-- `--layout-mode`：`classic` / `formal`
-- `--theme`：`formal_blue` / `corporate_gray` / `legal_red`
-- `--diversity`：`none` / `low` / `medium` / `high`
-- `--seed`：固定版式随机种子
+脱敏后会得到两个文件：
+- 脱敏后的 Word / PPT
+- 映射 JSON
 
-### 当前行为
-
-- 保持模板标题不变
-- 只向内容区写入要点
-- 放不下时自动续页
-- 有表格时尽量避让表格区域
-- 模型失败时回退规则模式
-
-## 文档脱敏
-
-当前支持：
-- `doc`
-- `docx`
-- `ppt`
-- `pptx`
-
-输出包括两部分：
-- 脱敏后的文件
-- 映射文件 `json`
+映射 JSON 很重要，还原时必须使用它。请和脱敏文件一起保存好。
 
 占位符示例：
 - `__COMPANY_001__`
 - `__PERSON_003__`
 - `__PROJECT_002__`
 
-### GUI 脱敏流程
+## AI Prompt
 
-推荐流程：
-1. 选择原始文件
-2. 点击“识别候选映射”
-3. 在右侧映射表里人工审核
-4. 点击“生成脱敏文档”
+打开 `AI Prompt` 页，可以：
+- 粘贴映射 JSON
+- 或点击 `载入 JSON 文件`
+- 或点击 `使用当前脱敏映射`
 
-映射表支持：
-- 搜索某个词是否已被识别
-- 双击直接编辑 `类别 / 敏感词 / 替换为`
-- 启用或禁用选中项
-- 删除误识别项
-- 手工新增映射
-- 批量新增映射
-- 载入旧的映射 `JSON` 继续审核
+点击 `生成 Prompt` 后，右侧会出现两块内容：
 
-### CLI 脱敏
+第一块是 `可复制给外部 AI 的 Prompt`：
+- 可以直接复制给外部 AI
+- 不包含原始敏感词
+- 会提醒外部 AI 不要修改占位符
+- 会提示哪些占位符可能指向同一对象
 
-```powershell
-python .\sanitize_docx.py sanitize `
-  --input "C:\input.docx" `
-  --output "C:\input_脱敏.docx" `
-  --mapping "C:\input_映射.json"
-```
+第二块是 `内部审核说明`：
+- 只给自己看
+- 会显示归组理由和原始名称线索
+- 不建议发给外部 AI
 
-脱敏 `pptx` 同理：
+给外部 AI 时，请同时发送：
+- 脱敏后的文档内容或文件
+- `可复制给外部 AI 的 Prompt`
 
-```powershell
-python .\sanitize_docx.py sanitize `
-  --input "C:\input.pptx" `
-  --output "C:\input_脱敏.pptx" `
-  --mapping "C:\input_映射.json"
-```
+不要把映射 JSON 或内部审核说明发给外部 AI，除非你确认其中内容可以外发。
 
-### AI 辅助识别
+## 还原
 
-CLI、GUI 和程序接口默认都会启用本地 Ollama 辅助识别：
-
-```powershell
-python .\sanitize_docx.py sanitize `
-  --input "C:\input.docx" `
-  --output "C:\input_脱敏.docx" `
-  --mapping "C:\input_映射.json" `
-  --model "qwen2.5:7b-instruct-q4_K_M"
-```
-
-旧版 `.doc` / `.ppt` 也可以作为输入或输出；如果当前环境无法转换，程序会提示安装 LibreOffice。
-
-如果要关闭模型，只用规则：
-
-```powershell
-python .\sanitize_docx.py sanitize `
-  --input "C:\input.docx" `
-  --output "C:\input_脱敏.docx" `
-  --mapping "C:\input_映射.json" `
-  --no-llm-assist
-```
-
-### 发给外部 AI 的使用规则
-
-你可以：
-- 删除不需要的句子或段落
-- 改写内容
-
-你不应该：
-- 修改占位符本身
-- 拆分占位符
-- 翻译占位符
-- 加空格或改编号
-
-也就是说：
-- 如果某个敏感对象被保留，对应占位符必须原样保留
-- 如果整句被删掉，占位符也可以一起删掉
-- 被删掉的占位符不会在后续还原时凭空恢复
-
-## 文档还原
-
-当前支持：
-- `doc`
-- `docx`
-- `ppt`
-- `pptx`
-
-### GUI 用法
-
-在 `还原` 页签中填写：
+打开 `还原` 页，依次选择：
 - AI 修改后的文件
-- 映射 `json`
-- 输出文件路径
+- 映射 JSON
+- 还原输出路径
 
-然后点击“开始还原”。
+然后点击 `开始还原`。
 
-### CLI 用法
+还原规则：
+- 文件里仍然保留的占位符会被替换回原始敏感信息
+- 如果外部 AI 删除了整句内容，对应敏感信息不会凭空恢复
+- 如果外部 AI 轻微改坏占位符，例如 `COMPANY_001` 或 `__COMPANY-001__`，工具会自动修复并在运行日志中说明
+- 如果占位符损坏比较明显、工具不够确定，会弹出确认窗口让你选择是否按某个映射还原
 
-```powershell
-python .\sanitize_docx.py restore `
-  --input "C:\input_脱敏_AI修改后.docx" `
-  --output "C:\input_还原.docx" `
-  --mapping "C:\input_映射.json"
+确认窗口里可以：
+- 双击某一行切换是否使用
+- 点击 `确认选中项`
+- 点击 `全选` 或 `全不选`
+- 最后点击 `确认并还原`
+
+还原完成后，请检查运行日志。日志会写明类似：
+
+```text
+自动修复相似占位符: COMPANY_001 -> __COMPANY_001__ -> 原始词
 ```
 
-还原 `pptx` 同理：
+## 更新
+
+客户端启动后会自动检测是否有新版本，也可以在 `关于` 页手动点击 `检测更新`。
+
+检测到新版本后：
+- 会下载对应系统的 Release 安装包
+- Windows exe 和 macOS app 的打包版本可以在确认后自动替换旧版本并重启
+- 源码运行时只下载更新包，不会自动替换
+
+## 从源码运行或构建
+
+普通使用者建议直接下载 Release 客户端；只有需要本地调试或自己发布版本时，才需要看这一节。
+
+### 从源码运行
+
+准备：
+- Python 3.10+
+- Ollama（如果要使用本地模型）
+
+安装依赖：
 
 ```powershell
-python .\sanitize_docx.py restore `
-  --input "C:\input_脱敏_AI修改后.pptx" `
-  --output "C:\input_还原.pptx" `
-  --mapping "C:\input_映射.json"
+python -m pip install -r requirements.txt
 ```
 
-## 推荐实战流程
-
-### 流程 1：月报直接转 PPT
-
-1. 原始月报 `docx`
-2. 直接转成模板 `pptx`
-3. 人工审核 PPT
-
-### 流程 2：敏感月报外发处理
-
-1. 原始月报 `docx` 先脱敏
-2. 用脱敏后的 `docx` 去转 PPT，或发给外部 AI
-3. 对最终 `word/ppt` 再做还原
-
-当前已经实测跑通：
-- `Word 脱敏 -> 脱敏 Word 转 PPT -> 对生成 PPT 还原`
-
-需要注意：
-- 只有最终文件中仍然保留的占位符，才会被还原
-- 如果外部 AI 把某段内容整段删掉，对应敏感词不会被重新补回
-
-## 打包
-
-### Windows
+启动 GUI：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+python gui_converter.py
 ```
 
-产物：
-- `dist\v版本号-FileToolbox.exe`，例如 `dist\v1.1.2-FileToolbox.exe`
+### 构建客户端
 
-### macOS
+构建前先安装构建依赖：
+
+```powershell
+python -m pip install -r requirements-build.txt
+```
+
+Windows 构建：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+```
+
+macOS 构建：
 
 ```bash
-bash ./scripts/build_macos.sh
+bash scripts/build_macos.sh
 ```
 
-产物：
-- `dist/v版本号-FileToolbox.app`，例如 `dist/v1.1.2-FileToolbox.app`
+构建产物会输出到 `dist` 目录。构建版本号会优先读取当前 git tag；如果没有 tag，会使用开发版本号。
 
-### 图标
+### 运行回归测试
 
-当前图标资源路径：
-- `assets/icon.png`
-
-构建时行为：
-- Windows：会自动从 `icon.png` 生成 `icon.ico`
-- macOS：若没有 `assets/icon.icns`，会尝试从 `icon.png` 生成
-
-## GitHub Actions
-
-当前已有工作流：
-- [build-desktop.yml](C:/Users/vegta/Desktop/month_report_convert/.github/workflows/build-desktop.yml)
-
-可通过以下方式自动构建：
-- 手动运行 `Build Desktop Packages`
-- 推送 `v*` tag
-
-客户端版本号不需要手动维护。源码运行时会从本地 git tag 推断当前版本；打包时会自动生成 `gui_app/version.txt` 并打进客户端。正式发版只需要推送 tag，例如：
+源码环境可以运行：
 
 ```powershell
-git tag v1.1.2
-git push origin v1.1.2
+python -m unittest discover -s tests -v
 ```
 
-## 工程结构
+测试会覆盖 Prompt 生成、占位符修复、Word 脱敏/还原和更新包选择等关键逻辑。
 
-### Word 转 PPT
+## 实现逻辑说明
 
-- [docx_to_ppt_converter.py](C:/Users/vegta/Desktop/month_report_convert/docx_to_ppt_converter.py)：CLI 入口
-- [report_converter/parsing.py](C:/Users/vegta/Desktop/month_report_convert/report_converter/parsing.py)：Word / OCR / 章节读取
-- [report_converter/drafting.py](C:/Users/vegta/Desktop/month_report_convert/report_converter/drafting.py)：选材、改写、指标提取
-- [report_converter/layout.py](C:/Users/vegta/Desktop/month_report_convert/report_converter/layout.py)：PPT 写回、续页、排版
-- [report_converter/engine.py](C:/Users/vegta/Desktop/month_report_convert/report_converter/engine.py)：总控
+### 脱敏逻辑
 
-### 脱敏 / 还原
+工具会先读取 Word / PPT 中的可见文本，再用规则和本地模型辅助识别公司、人员、项目、客户、金额等敏感候选项。识别结果不会立刻写入文件，而是先进入右侧映射表，用户审核后才会生成最终脱敏文档。
 
-- [sanitize_docx.py](C:/Users/vegta/Desktop/month_report_convert/sanitize_docx.py)：CLI 入口
-- [doc_sanitizer/engine.py](C:/Users/vegta/Desktop/month_report_convert/doc_sanitizer/engine.py)：总控
-- [doc_sanitizer/document_io.py](C:/Users/vegta/Desktop/month_report_convert/doc_sanitizer/document_io.py)：`docx/pptx` 读写、替换、还原
-- [doc_sanitizer/scanning.py](C:/Users/vegta/Desktop/month_report_convert/doc_sanitizer/scanning.py)：候选识别与映射构建
-- [doc_sanitizer/mapping.py](C:/Users/vegta/Desktop/month_report_convert/doc_sanitizer/mapping.py)：映射读写与编号
-- [doc_sanitizer/patterns.py](C:/Users/vegta/Desktop/month_report_convert/doc_sanitizer/patterns.py)：规则与校验
-- [doc_sanitizer/llm_assist.py](C:/Users/vegta/Desktop/month_report_convert/doc_sanitizer/llm_assist.py)：本地模型辅助识别
+生成脱敏文档时，工具会按映射 JSON 把原始敏感词替换成占位符，例如 `__COMPANY_001__`。映射 JSON 会保存“占位符 -> 原始词”的关系，所以它本身属于敏感文件。
 
-### GUI
+### 旧版 Office 格式处理
 
-- [gui_converter.py](C:/Users/vegta/Desktop/month_report_convert/gui_converter.py)：GUI 启动入口
-- [gui_app/app.py](C:/Users/vegta/Desktop/month_report_convert/gui_app/app.py)：主程序与共享逻辑
-- [gui_app/convert_tab.py](C:/Users/vegta/Desktop/month_report_convert/gui_app/convert_tab.py)：月报转 PPT 页签
-- [gui_app/sanitize_tab.py](C:/Users/vegta/Desktop/month_report_convert/gui_app/sanitize_tab.py)：脱敏页签
-- [gui_app/restore_tab.py](C:/Users/vegta/Desktop/month_report_convert/gui_app/restore_tab.py)：还原页签
+`.docx` / `.pptx` 会直接处理。`.doc` / `.ppt` 是旧版二进制格式，工具会调用 LibreOffice 临时转换成 `.docx` / `.pptx` 后再处理，处理完再按需要转回旧格式。
 
-## 当前已知限制
+### AI Prompt 生成逻辑
 
-- OCR 数字提取仍可能需要人工复核
-- 英文合同识别比中文月报更依赖人工审核
-- 外部 AI 如果改坏了占位符，当前还原仍可能失败
-- 后续建议加入“模糊占位符匹配 + 同一对象归并”能力
+工具会读取映射 JSON，找出可能指向同一对象的占位符组合，例如简称、全称、项目缩写等。生成给外部 AI 的 Prompt 时，只输出占位符，不输出原始敏感词。
+
+内部审核说明会展示归组理由和原始名称线索，用于用户自己判断，不建议发给外部 AI。
+
+### 还原逻辑
+
+还原时，工具会读取映射 JSON，把文件中仍然存在的占位符替换回原始词。如果外部 AI 删除了整句内容，工具不会凭空补回被删除的敏感词。
+
+如果外部 AI 轻微改坏占位符，例如把 `__COMPANY_001__` 改成 `COMPANY_001` 或 `__COMPANY-001__`，工具会自动修复并写入运行日志。如果损坏更明显但仍然相似，工具会在 GUI 中弹出确认窗口，由用户选择是否按某个映射还原。
+
+### 更新逻辑
+
+客户端会通过 GitHub Release 检测新版本。打包后的 Windows exe / macOS app 可以下载新版本后启动临时更新脚本，等待当前程序退出，再替换旧版本并重新打开。源码运行不会自动替换，只会下载更新包。
+
+## 已知限制
+
+- OCR、图片、复杂文本框和特殊版式仍可能需要人工复核
+- 英文合同、项目简称、客户简称更依赖人工确认
+- 同一对象归组基于规则和文本相似度，不能替代人工判断
+- 工具无法替代正式的数据安全、保密和合规审核流程
