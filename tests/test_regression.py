@@ -18,6 +18,7 @@ from doc_sanitizer.fuzzy_mapping import (
 from doc_sanitizer.llm_assist import build_llm_candidate_contexts, chunk_texts_for_llm, count_texts_with_existing_terms, select_texts_for_llm, stable_text_hash
 from doc_sanitizer.mapping import mapping_entries, read_mapping
 from report_converter.common import log, route_logs_to
+from gui_app.self_update import build_windows_update_script, windows_update_target_path
 from gui_app.update_checker import (
     ReleaseAsset,
     UpdateInfo,
@@ -373,6 +374,28 @@ class UpdateCheckerTests(unittest.TestCase):
         # 失败/边界用例：无法解析数字的版本号按 0 处理，不应抛异常影响启动检测。
         self.assertEqual(compare_versions("dev", "0.0.0"), 0)
         self.assertLess(compare_versions("dev", "1.0.0"), 0)
+
+    def test_windows_self_update_uses_new_versioned_exe_name(self) -> None:
+        # 失败用例：旧逻辑把新 exe 复制到旧路径，导致内容已更新但文件名仍是旧版本号。
+        current_app = Path(r"C:\Tools\v1.2.0-FileToolbox.exe")
+        asset_path = Path(r"C:\Users\tester\Downloads\v1.2.1-FileToolbox.exe")
+
+        target = windows_update_target_path(asset_path, current_app)
+        script = build_windows_update_script(
+            asset_path=asset_path,
+            current_app=current_app,
+            target_app=target,
+            pid=1234,
+            script_path=Path(r"C:\Temp\FileToolbox_update.bat"),
+            vbs_path=Path(r"C:\Temp\FileToolbox_update.vbs"),
+            log_path=Path(r"C:\Temp\FileToolbox_update.log"),
+        )
+
+        self.assertEqual(target, Path(r"C:\Tools\v1.2.1-FileToolbox.exe"))
+        self.assertIn('copy /Y "%NEW_EXE%" "%TARGET_EXE%"', script)
+        self.assertIn('del "%OLD_EXE%"', script)
+        self.assertIn('start "" "%TARGET_EXE%"', script)
+        self.assertNotIn("pause", script.lower())
 
 
 class GuiLogBridgeTests(unittest.TestCase):

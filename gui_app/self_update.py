@@ -40,31 +40,73 @@ def launch_windows_self_updater(asset_path: Path, app_path: Path | None = None) 
         raise RuntimeError(f"找不到更新包: {asset_path}")
 
     script_path = Path(tempfile.gettempdir()) / "FileToolbox_update.bat"
-    script = f"""@echo off
+    vbs_path = Path(tempfile.gettempdir()) / "FileToolbox_update.vbs"
+    target_app = windows_update_target_path(asset_path, current_app)
+    log_path = Path(tempfile.gettempdir()) / "FileToolbox_update.log"
+    script = build_windows_update_script(
+        asset_path=asset_path,
+        current_app=current_app,
+        target_app=target_app,
+        pid=os.getpid(),
+        script_path=script_path,
+        vbs_path=vbs_path,
+        log_path=log_path,
+    )
+    script_path.write_text(script, encoding="utf-8")
+    vbs_path.write_text(
+        f'Set shell = CreateObject("WScript.Shell")\n'
+        f'shell.Run Chr(34) & "{script_path}" & Chr(34), 0, False\n',
+        encoding="utf-8",
+    )
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(["wscript.exe", str(vbs_path)], close_fds=True, creationflags=creationflags)
+    return script_path
+
+
+def windows_update_target_path(asset_path: Path, current_app: Path) -> Path:
+    return current_app.parent / asset_path.name
+
+
+def build_windows_update_script(
+    asset_path: Path,
+    current_app: Path,
+    target_app: Path,
+    pid: int,
+    script_path: Path,
+    vbs_path: Path,
+    log_path: Path,
+) -> str:
+    same_source_and_target = asset_path.resolve() == target_app.resolve()
+    copy_block = (
+        'copy /Y "%NEW_EXE%" "%TARGET_EXE%" >>"%LOG%" 2>&1\n'
+        "if errorlevel 1 exit /b 1"
+        if not same_source_and_target
+        else 'echo Downloaded exe is already in the target path. >>"%LOG%"'
+    )
+    cleanup_download = 'del "%NEW_EXE%" >nul 2>nul' if not same_source_and_target else ""
+    return f"""@echo off
 chcp 65001 >nul
 set "NEW_EXE={asset_path}"
 set "OLD_EXE={current_app}"
-set "PID={os.getpid()}"
-echo Waiting for FileToolbox to exit...
+set "TARGET_EXE={target_app}"
+set "PID={pid}"
+set "LOG={log_path}"
+echo Waiting for FileToolbox to exit... >"%LOG%"
 :waitloop
 tasklist /FI "PID eq %PID%" | find "%PID%" >nul
 if not errorlevel 1 (
   timeout /t 1 /nobreak >nul
   goto waitloop
 )
-copy /Y "%NEW_EXE%" "%OLD_EXE%" >nul
-if errorlevel 1 (
-  echo Update failed. Please replace the file manually.
-  pause
-  exit /b 1
+{copy_block}
+if /I not "%OLD_EXE%"=="%TARGET_EXE%" (
+  del "%OLD_EXE%" >>"%LOG%" 2>&1
 )
-start "" "%OLD_EXE%"
-del "%NEW_EXE%" >nul 2>nul
+start "" "%TARGET_EXE%"
+{cleanup_download}
+del "{vbs_path}" >nul 2>nul
 del "%~f0" >nul 2>nul
 """
-    script_path.write_text(script, encoding="utf-8")
-    subprocess.Popen(["cmd", "/c", "start", "", str(script_path)], close_fds=True)
-    return script_path
 
 
 def find_current_macos_app() -> Path:
