@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from typing import Any
 import urllib.error
 import urllib.request
 
 from report_converter.common import log, normalize_text
-from .patterns import clean_candidate_value, is_valid_candidate
+from .patterns import clean_candidate_value, extract_contextual_candidates, is_valid_candidate, match_candidates_in_text
 
 def collect_llm_candidates(
     texts: list[str],
@@ -15,31 +16,152 @@ def collect_llm_candidates(
     ollama_url: str,
     timeout_sec: int,
     retries: int,
+    rule_candidates: list[tuple[str, str, str]] | None = None,
+    existing_terms: set[str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    chunks = chunk_texts_for_llm(texts, max_chars=1800, max_items=16)
+    existing_terms = {normalize_text(term) for term in (existing_terms or set()) if normalize_text(term)}
+    selected_texts = select_texts_for_llm(texts, max_texts=96, existing_terms=existing_terms)
+    excluded_existing = count_texts_with_existing_terms(texts, existing_terms)
+    cached_payloads = [LLM_RESPONSE_CACHE[stable_text_hash(text)] for text in selected_texts if stable_text_hash(text) in LLM_RESPONSE_CACHE]
+    llm_texts = [text for text in selected_texts if stable_text_hash(text) not in LLM_RESPONSE_CACHE]
+    chunks = chunk_texts_for_llm(llm_texts, max_chars=1800, max_items=16, max_chunks=12)
+    log(
+        "AI 辅助识别准备: "
+        f"全文 {len(texts)} 段，规则候选 {len(rule_candidates or [])} 条，"
+        f"送模型 {len(llm_texts)} 段，缓存命中 {len(cached_payloads)} 段，"
+        f"排除已有映射相关段 {excluded_existing} 段，模型分段 {len(chunks)} 段"
+    )
     candidates: list[tuple[str, str, str]] = []
+    for payload in cached_payloads:
+        candidates.extend(extract_candidates_from_llm_payload(payload))
     for idx, chunk in enumerate(chunks, start=1):
         log(f"AI 辅助识别分段 {idx}/{len(chunks)}")
+        prompt = build_llm_candidate_prompt(chunk)
         payload = call_ollama_candidate_json(
             ollama_url=ollama_url,
             model=model,
-            prompt=build_llm_candidate_prompt(chunk),
+            prompt=prompt,
             timeout_sec=timeout_sec,
             retries=retries,
         )
-        for row in payload.get("candidates", []):
-            if not isinstance(row, dict):
-                continue
-            category = normalize_text(str(row.get("category", "")).upper()) or "MANUAL"
-            original = clean_candidate_value(normalize_text(str(row.get("text", ""))), category)
-            if is_valid_candidate(original, category):
-                candidates.append((category, original, "llm"))
+        for context in chunk:
+            LLM_RESPONSE_CACHE[stable_text_hash(context)] = payload
+        candidates.extend(extract_candidates_from_llm_payload(payload))
     deduped: dict[str, tuple[str, str]] = {}
     for category, value, source in sorted(candidates, key=lambda item: len(item[1]), reverse=True):
+        if normalize_text(value) in existing_terms:
+            continue
         deduped.setdefault(normalize_text(value), (category, source))
     return [(category, original, source) for original, (category, source) in deduped.items()]
 
-def chunk_texts_for_llm(texts: list[str], max_chars: int = 1800, max_items: int = 16) -> list[list[str]]:
+
+LLM_RESPONSE_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def stable_text_hash(text: str) -> str:
+    return hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
+
+
+def count_texts_with_existing_terms(texts: list[str], existing_terms: set[str]) -> int:
+    if not existing_terms:
+        return 0
+    return sum(1 for text in texts if any(term and term in normalize_text(text) for term in existing_terms))
+
+
+def extract_candidates_from_llm_payload(payload: dict[str, Any]) -> list[tuple[str, str, str]]:
+    candidates: list[tuple[str, str, str]] = []
+    for row in payload.get("candidates", []):
+        if not isinstance(row, dict):
+            continue
+        category = normalize_text(str(row.get("category", "")).upper()) or "MANUAL"
+        original = clean_candidate_value(normalize_text(str(row.get("text", ""))), category)
+        if is_valid_candidate(original, category):
+            candidates.append((category, original, "llm"))
+    return candidates
+
+
+def build_llm_candidate_contexts(
+    texts: list[str],
+    rule_candidates: list[tuple[str, str, str]],
+    existing_terms: set[str],
+    max_contexts: int = 80,
+) -> list[str]:
+    terms = [
+        (category, normalize_text(value))
+        for category, value, _source in rule_candidates
+        if normalize_text(value) and normalize_text(value) not in existing_terms
+    ]
+    contexts: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        normalized = normalize_text(text)
+        if not normalized:
+            continue
+        matched = [(category, value) for category, value in terms if value and value in normalized]
+        if not matched:
+            continue
+        candidate_part = "；".join(f"{category}|{value}" for category, value in matched[:8])
+        context = f"候选：{candidate_part}\n上下文：{normalized[:500]}"
+        key = stable_text_hash(context)
+        if key in seen:
+            continue
+        seen.add(key)
+        contexts.append(context)
+        if len(contexts) >= max_contexts:
+            break
+    return contexts
+
+
+def select_texts_for_llm(texts: list[str], max_texts: int = 72, existing_terms: set[str] | None = None) -> list[str]:
+    existing_terms = existing_terms or set()
+    scored: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(texts):
+        text = normalize_text(raw)
+        if len(text) < 4 or text in seen:
+            continue
+        if any(term and term in text for term in existing_terms):
+            continue
+        seen.add(text)
+        score = llm_text_score(text)
+        if score > 0:
+            scored.append((score, -index, text))
+    if not scored:
+        return list(seen)[:max_texts]
+    return [text for _score, _index, text in sorted(scored, reverse=True)[:max_texts]]
+
+
+def llm_text_score(text: str) -> int:
+    score = 0
+    if match_candidates_in_text(text) or extract_contextual_candidates(text):
+        score += 5
+    sensitive_markers = [
+        "公司",
+        "客户",
+        "供应商",
+        "项目",
+        "合同",
+        "案号",
+        "申请人",
+        "被申请人",
+        "联系人",
+        "律所",
+        "律师事务所",
+        "保密",
+        "涉美",
+        "出口管制",
+    ]
+    score += sum(1 for marker in sensitive_markers if marker in text)
+    if any(char.isdigit() for char in text):
+        score += 1
+    if any(char.isupper() for char in text):
+        score += 1
+    if len(text) > 160:
+        score -= 1
+    return score
+
+
+def chunk_texts_for_llm(texts: list[str], max_chars: int = 1800, max_items: int = 16, max_chunks: int = 12) -> list[list[str]]:
     chunks: list[list[str]] = []
     current: list[str] = []
     current_len = 0
@@ -56,10 +178,25 @@ def chunk_texts_for_llm(texts: list[str], max_chars: int = 1800, max_items: int 
         current_len += line_len
     if current:
         chunks.append(current)
-    return chunks[:12]
+    return chunks[:max_chunks]
 
-def build_llm_candidate_prompt(chunk: list[str]) -> str:
+def build_llm_candidate_prompt(chunk: list[str], candidate_mode: bool = False) -> str:
     numbered = "\n".join(f"{idx + 1}. {line}" for idx, line in enumerate(chunk))
+    if candidate_mode:
+        return f"""请审核下面的“候选 + 上下文”，判断哪些候选确实需要脱敏，并可补充同一上下文中明显遗漏的短实体。输出严格 JSON。
+
+规则：
+1. 优先返回候选中的真实敏感实体；不要返回不敏感、泛化或纯说明性词语。
+2. 如果候选类别不准，可以修正 category。
+3. 只返回文本中真实出现的短实体，不要改写，不要杜撰。
+4. 如果不确定，不要返回。
+5. category 只能是：COMPANY、PERSON、PROJECT、CASE、CODE、CUSTOMER、SUPPLIER、TITLE。
+
+输出格式：{{"candidates":[{{"text":"<原文中的敏感实体>","category":"COMPANY"}}]}}
+
+待审核内容：
+{numbered}
+"""
     return f"""请从下面文本中识别需要脱敏的敏感实体，并输出严格 JSON。
 
 规则：

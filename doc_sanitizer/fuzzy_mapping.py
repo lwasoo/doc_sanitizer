@@ -59,6 +59,14 @@ class PlaceholderRepair:
     score: float
 
 
+@dataclass(frozen=True)
+class PlaceholderParts:
+    category: str
+    index: str
+    raw_index: str
+    canonical: str
+
+
 def payload_from_json_text(raw: str) -> dict[str, Any]:
     data = json.loads(raw)
     if not isinstance(data, dict):
@@ -196,36 +204,80 @@ def group_entity_matches(items: list[ReplacementItem], threshold: float = 0.78) 
 
 
 def canonical_placeholder(value: str) -> str:
+    parts = parse_placeholder_parts(value)
+    return parts.canonical if parts else ""
+
+
+def parse_placeholder_parts(value: str) -> PlaceholderParts | None:
     match = PLACEHOLDER_RE.fullmatch(unicodedata.normalize("NFKC", value).strip())
     if not match:
-        return ""
+        return None
     category = match.group(1).upper()
     index = match.group(2)
     if not index:
-        return f"__{category}__"
+        return PlaceholderParts(category=category, index="", raw_index="", canonical=f"__{category}__")
     if index.upper() == "MANUAL":
-        return f"__{category}_MANUAL__"
-    return f"__{category}_{int(index):03d}__"
+        return PlaceholderParts(category=category, index="MANUAL", raw_index="MANUAL", canonical=f"__{category}_MANUAL__")
+    normalized_index = f"{int(index):03d}"
+    return PlaceholderParts(category=category, index=normalized_index, raw_index=index, canonical=f"__{category}_{normalized_index}__")
+
+
+def placeholder_category_score(left: str, right: str) -> float:
+    if left == right:
+        return 1.0
+    if len(left) >= 3 and right.endswith(left):
+        return 0.92
+    if len(right) >= 3 and left.endswith(right):
+        return 0.92
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def placeholder_index_score(left: str, right: str) -> float:
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 1.0
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def placeholder_repair_score(token_parts: PlaceholderParts, target_parts: PlaceholderParts) -> float:
+    category_score = placeholder_category_score(token_parts.category, target_parts.category)
+    index_score = placeholder_index_score(token_parts.raw_index, target_parts.raw_index)
+    if token_parts.index == target_parts.index:
+        if category_score == 1.0:
+            return 1.0
+        if category_score >= 0.86:
+            return 0.92
+        if category_score >= 0.66:
+            return 0.78
+        return 0.0
+    if category_score >= 0.86 and index_score >= 0.78:
+        return min(0.89, 0.72 + index_score * 0.16)
+    return 0.0
 
 
 def suggest_placeholder_repairs(text: str, items: list[ReplacementItem], min_score: float = 0.70) -> list[PlaceholderRepair]:
     canonical_set = {item.placeholder.upper(): item.placeholder for item in items}
+    target_parts = [
+        (item.placeholder, parsed)
+        for item in items
+        for parsed in [parse_placeholder_parts(item.placeholder)]
+        if parsed is not None
+    ]
     repairs: list[PlaceholderRepair] = []
     for match in PLACEHOLDER_RE.finditer(text):
         token = match.group(0)
-        canonical = canonical_placeholder(token)
-        if not canonical:
+        token_parts = parse_placeholder_parts(token)
+        if not token_parts:
             continue
-        target = canonical_set.get(canonical.upper())
+        target = canonical_set.get(token_parts.canonical.upper())
         if target and token != target:
             repairs.append(PlaceholderRepair(token=token, canonical=target, score=1.0))
             continue
         best_target = ""
         best_score = 0.0
-        normalized_token = canonical.strip("_").replace("_", "")
-        for placeholder in canonical_set.values():
-            normalized_placeholder = placeholder.strip("_").replace("_", "")
-            score = SequenceMatcher(None, normalized_token, normalized_placeholder).ratio()
+        for placeholder, parts in target_parts:
+            score = placeholder_repair_score(token_parts, parts)
             if score > best_score:
                 best_score = score
                 best_target = placeholder

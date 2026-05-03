@@ -37,7 +37,16 @@ def build_mapping_payload(
     candidates = collect_candidates(texts, custom_terms)
     if use_llm_assist:
         try:
-            llm_candidates = collect_llm_candidates(texts, model=model, ollama_url=ollama_url, timeout_sec=timeout_sec, retries=retries)
+            existing_terms = {normalize_text(str(entry.get("original", ""))) for entry in existing_entries if isinstance(entry, dict)}
+            llm_candidates = collect_llm_candidates(
+                texts,
+                model=model,
+                ollama_url=ollama_url,
+                timeout_sec=timeout_sec,
+                retries=retries,
+                rule_candidates=candidates,
+                existing_terms=existing_terms,
+            )
             if llm_candidates:
                 log(f"AI 辅助新增候选: {len(llm_candidates)} 条")
                 candidates.extend(llm_candidates)

@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 import re
+
+
+LogSink = Callable[[str, str, str], None]
+_LOG_SINK: ContextVar[LogSink | None] = ContextVar("log_sink", default=None)
 
 
 def log(message: str, level: str = "INFO") -> None:
     ts = dt.datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] [{level}] {message}", flush=True)
+    formatted = f"[{ts}] [{level}] {message}"
+    print(formatted, flush=True)
+    sink = _LOG_SINK.get()
+    if sink is not None:
+        sink(message, level, formatted)
+
+
+@contextmanager
+def route_logs_to(sink: LogSink):
+    token = _LOG_SINK.set(sink)
+    try:
+        yield
+    finally:
+        _LOG_SINK.reset(token)
 
 
 def normalize_text(text: str) -> str:

@@ -28,6 +28,7 @@ from .prompt_tab import PromptTabMixin
 from .restore_tab import RestoreTabMixin
 from .sanitize_tab import SanitizeTabMixin
 from office_conversion import LIBREOFFICE_DOWNLOAD_URL, OfficeConversionError
+from report_converter.common import route_logs_to
 
 
 def configure_windows_dpi() -> None:
@@ -365,7 +366,8 @@ class ConverterGUI(ConvertTabMixin, SanitizeTabMixin, RestoreTabMixin, PromptTab
 
         def runner() -> None:
             try:
-                func()
+                with route_logs_to(lambda _message, _level, formatted: self.log_queue.put((target, formatted))):
+                    func()
             except OfficeConversionError as exc:
                 self.root.after(0, status_var.set, "运行失败")
                 self.root.after(0, self._show_office_conversion_error, exc)
