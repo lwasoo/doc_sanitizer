@@ -7,6 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from doc_sanitizer import apply_mapping_to_file, read_mapping, scan_file
+from doc_sanitizer.mapping import compact_entry_placeholders
 from .defaults import DEFAULT_MODEL, DEFAULT_OLLAMA_URL
 
 
@@ -110,7 +111,7 @@ class SanitizeTabMixin:
         ttk.Label(search_row, text="搜索", style="Field.TLabel").grid(row=0, column=0, sticky="w")
         search_entry = ttk.Entry(search_row, textvariable=self.mapping_search_var)
         search_entry.grid(row=0, column=1, sticky="ew", padx=(8, 8))
-        search_entry.bind("<KeyRelease>", lambda _e: self._refresh_mapping_tree())
+        search_entry.bind("<KeyRelease>", self._schedule_mapping_search_refresh)
         ttk.Button(search_row, text="清空", style="Secondary.TButton", command=self.clear_mapping_search).grid(row=0, column=2)
 
         tree_shell = ttk.Frame(review_group, style="Card.TFrame")
@@ -140,9 +141,16 @@ class SanitizeTabMixin:
         scroll.grid(row=0, column=1, sticky="ns")
         xscroll.grid(row=1, column=0, sticky="ew")
         self.mapping_tree.bind("<Double-1>", self._begin_tree_edit)
+        self.mapping_tree.bind("<Delete>", lambda _event: self.remove_selected_mapping_entries())
+        self.mapping_tree.bind("<space>", lambda _event: self.toggle_selected_mapping_entries())
+        self.mapping_tree.bind("<Control-a>", self.select_all_visible_mapping_entries)
+        self.mapping_tree.bind("<Control-A>", self.select_all_visible_mapping_entries)
+        self.mapping_tree.bind("<Control-z>", self.undo_mapping_change)
+        self.mapping_tree.bind("<Control-Z>", self.undo_mapping_change)
 
         tool_row = ttk.Frame(review_group, style="Card.TFrame")
         tool_row.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        ttk.Button(tool_row, text="撤销", style="Secondary.TButton", command=self.undo_mapping_change).pack(side="left")
         ttk.Button(tool_row, text="启用/禁用选中", style="Secondary.TButton", command=self.toggle_selected_mapping_entries).pack(side="left")
         ttk.Button(tool_row, text="删除选中", style="Secondary.TButton", command=self.remove_selected_mapping_entries).pack(side="left", padx=(8, 0))
 
@@ -167,7 +175,7 @@ class SanitizeTabMixin:
         ttk.Button(batch_row, text="批量添加", style="Secondary.TButton", command=self.add_manual_mapping_batch).grid(row=1, column=1, sticky="ne", padx=(10, 0))
         ttk.Label(
             review_group,
-            text="支持双击表格直接编辑；搜索可确认某个名词是否已被识别。批量添加每行可写：名称，或 COMPANY|名称，或 名称=>__COMPANY_001__。",
+            text="支持双击表格直接编辑；生成脱敏文档前会自动整理占位符编号。生成后如继续修改映射，请放弃旧输出并重新生成脱敏文档。",
             style="Hint.TLabel",
         ).grid(row=6, column=0, sticky="w", pady=(8, 0))
 
@@ -176,13 +184,10 @@ class SanitizeTabMixin:
             filetypes=[("支持的文件", "*.doc *.docx *.ppt *.pptx"), ("Word 文档", "*.doc *.docx"), ("PPT 文档", "*.ppt *.pptx")]
         )
         if path:
+            if not self._confirm_source_change_or_clear(path):
+                return
             self.sanitize_input_var.set(path)
-            stem = Path(path).stem
-            suffix = Path(path).suffix.lower()
-            if not self.sanitize_output_var.get():
-                self.sanitize_output_var.set(str(Path(path).with_name(f"{stem}_脱敏{suffix}")))
-            if not self.sanitize_mapping_var.get():
-                self.sanitize_mapping_var.set(str(Path(path).with_name(f"{stem}_映射.json")))
+            self._set_default_sanitize_paths_for_source(path)
 
     def _browse_sanitize_output(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -211,6 +216,7 @@ class SanitizeTabMixin:
         self.sanitize_mapping_var.set(path)
         source_file = str(payload.get("source_file", "")).strip()
         sanitized_file = str(payload.get("sanitized_file", "")).strip()
+        self.mapping_applied = bool(sanitized_file)
         if source_file:
             self.sanitize_input_var.set(source_file)
         if sanitized_file:
@@ -234,8 +240,70 @@ class SanitizeTabMixin:
             return False
         return True
 
+    def _source_key(self, value: str) -> str:
+        if not value.strip():
+            return ""
+        try:
+            return str(Path(value).expanduser().resolve(strict=False)).casefold()
+        except Exception:
+            return value.strip().casefold()
+
+    def _mapping_source_file(self) -> str:
+        if not self.current_mapping_data:
+            return ""
+        return str(self.current_mapping_data.get("source_file", "")).strip()
+
+    def _mapping_has_entries(self) -> bool:
+        return bool(self._mapping_entries())
+
+    def _set_default_sanitize_paths_for_source(self, source: str, force: bool = False) -> None:
+        source_path = Path(source)
+        stem = source_path.stem
+        suffix = source_path.suffix.lower()
+        if force or not self.sanitize_output_var.get():
+            self.sanitize_output_var.set(str(source_path.with_name(f"{stem}_脱敏{suffix}")))
+        if force or not self.sanitize_mapping_var.get():
+            self.sanitize_mapping_var.set(str(source_path.with_name(f"{stem}_映射.json")))
+
+    def _confirm_source_change_or_clear(self, new_source: str) -> bool:
+        old_source = self._mapping_source_file()
+        if not self._mapping_has_entries() or not old_source:
+            return True
+        if self._source_key(old_source) == self._source_key(new_source):
+            return True
+        choice = messagebox.askyesnocancel(
+            "更换原始文件",
+            "检测到你更换了原始文件。\n\n"
+            "当前映射属于之前的文档，继续使用可能导致漏识别或还原错误。\n\n"
+            "选择“是”：清空当前映射，并停在未识别状态。\n"
+            "选择“否”：继续保留当前映射。\n"
+            "选择“取消”：不更换文件。",
+        )
+        if choice is None:
+            return False
+        if choice:
+            self._clear_mapping_for_new_source(new_source)
+            return False
+        self.log_queue.put(("sanitize", "[WARN] 已更换原始文件但继续沿用旧映射，请确认映射仍然适用于新文档。"))
+        return True
+
+    def _clear_mapping_for_new_source(self, new_source: str) -> None:
+        self.current_mapping_data = None
+        self.scan_ready = False
+        self.mapping_applied = False
+        self.mapping_undo_snapshot = None
+        self.sanitize_input_var.set(new_source)
+        self._set_default_sanitize_paths_for_source(new_source, force=True)
+        self._refresh_mapping_tree()
+        self.mapping_summary_var.set("尚未识别候选映射。")
+        self.sanitize_status_var.set("等待识别")
+        self._update_sanitize_action_states()
+        self.log_queue.put(("sanitize", "[INFO] 已清空旧映射；请重新点击“识别候选映射”。"))
+
     def start_scan_mapping(self) -> None:
         if not self._validate_scan_inputs():
+            return
+        if not self._confirm_source_change_or_clear(self.sanitize_input_var.get().strip()):
             return
         params = self._scan_worker_params()
         self._start_worker("sanitize", self.sanitize_status_var, "[INFO] 开始识别候选映射...", lambda: self._scan_mapping_worker(params))
@@ -243,6 +311,8 @@ class SanitizeTabMixin:
     def rescan_mapping(self) -> None:
         if not self.current_mapping_data:
             self.start_scan_mapping()
+            return
+        if not self._confirm_source_change_or_clear(self.sanitize_input_var.get().strip()):
             return
         params = self._scan_worker_params()
         self._start_worker("sanitize", self.sanitize_status_var, "[INFO] 按当前映射继续识别候选映射...", lambda: self._scan_mapping_worker(params))
@@ -280,6 +350,7 @@ class SanitizeTabMixin:
     def _after_scan_complete(self, payload: dict[str, object]) -> None:
         self.current_mapping_data = payload
         self.scan_ready = True
+        self.mapping_applied = False
         self._rebuild_mapping_metadata()
         self._refresh_mapping_tree()
         self.sanitize_status_var.set("待确认")
@@ -293,6 +364,7 @@ class SanitizeTabMixin:
         if not self.current_mapping_data:
             messagebox.showwarning("无候选映射", "请先识别候选映射。")
             return
+        self._compact_mapping_placeholders(log_changes=True)
         self._rebuild_mapping_metadata()
         params = self._apply_worker_params()
         self._start_worker("sanitize", self.sanitize_status_var, "[INFO] 开始生成脱敏文档...", lambda: self._apply_mapping_worker(params))
@@ -323,6 +395,7 @@ class SanitizeTabMixin:
         self.sanitize_output_var.set(str(output_path))
         self.sanitize_mapping_var.set(str(mapping_path))
         self.sanitize_status_var.set("已生成")
+        self.mapping_applied = True
         self.mapping_summary_var.set(self._mapping_summary_text())
         self._update_sanitize_action_states()
         self.log_queue.put(("sanitize", f"[INFO] 脱敏完成: {output_path}"))
@@ -378,7 +451,27 @@ class SanitizeTabMixin:
             )
 
     def clear_mapping_search(self) -> None:
+        self._cancel_mapping_search_refresh()
         self.mapping_search_var.set("")
+        self._refresh_mapping_tree()
+
+    def _schedule_mapping_search_refresh(self, event=None):
+        self._cancel_mapping_search_refresh()
+        self.mapping_search_after_id = self.root.after(300, self._run_mapping_search_refresh)
+        return None
+
+    def _cancel_mapping_search_refresh(self) -> None:
+        after_id = getattr(self, "mapping_search_after_id", None)
+        if not after_id:
+            return
+        try:
+            self.root.after_cancel(after_id)
+        except Exception:
+            pass
+        self.mapping_search_after_id = None
+
+    def _run_mapping_search_refresh(self) -> None:
+        self.mapping_search_after_id = None
         self._refresh_mapping_tree()
 
     def _begin_tree_edit(self, event) -> None:
@@ -417,6 +510,9 @@ class SanitizeTabMixin:
         idx = int(item_id)
         if not (0 <= idx < len(entries)):
             return
+        if not self._confirm_edit_after_apply():
+            return
+        self._save_mapping_undo_snapshot()
         entry = entries[idx]
         if column == "#2":
             category = (new_value or "MANUAL").upper()
@@ -430,6 +526,7 @@ class SanitizeTabMixin:
                 placeholder, category = self._normalize_placeholder_input(new_value, entries, str(entry.get("category", "MANUAL")), exclude_index=idx)
                 entry["placeholder"] = placeholder
                 entry["category"] = category
+        self._compact_mapping_placeholders(log_changes=False)
         self._rebuild_mapping_metadata()
         self._refresh_mapping_tree()
         self.mapping_summary_var.set(self._mapping_summary_text())
@@ -450,6 +547,9 @@ class SanitizeTabMixin:
         selected = self.mapping_tree.selection()
         if not entries or not selected:
             return
+        if not self._confirm_edit_after_apply():
+            return
+        self._save_mapping_undo_snapshot()
         for item_id in selected:
             idx = int(item_id)
             if 0 <= idx < len(entries):
@@ -464,6 +564,9 @@ class SanitizeTabMixin:
         selected = sorted((int(item_id) for item_id in self.mapping_tree.selection()), reverse=True)
         if not entries or not selected:
             return
+        if not self._confirm_edit_after_apply():
+            return
+        self._save_mapping_undo_snapshot()
         for idx in selected:
             if 0 <= idx < len(entries):
                 entries.pop(idx)
@@ -475,6 +578,7 @@ class SanitizeTabMixin:
             self.sanitize_status_var.set("等待识别")
             self._update_sanitize_action_states()
             return
+        self._compact_mapping_placeholders(log_changes=True)
         self._rebuild_mapping_metadata()
         self._refresh_mapping_tree()
         self.mapping_summary_var.set(self._mapping_summary_text())
@@ -490,8 +594,11 @@ class SanitizeTabMixin:
         if not sensitive:
             messagebox.showwarning("缺少参数", "请先填写敏感词。")
             return
+        if not self._confirm_edit_after_apply():
+            return
         if not self.current_mapping_data:
             self.current_mapping_data = {"version": 2, "source_file": "", "sanitized_file": "", "entries": []}
+        self._save_mapping_undo_snapshot()
         entries = self._mapping_entries()
         if any(str(item.get("original", "")).strip() == sensitive for item in entries):
             messagebox.showwarning("重复条目", "当前映射中已存在相同敏感词。")
@@ -522,8 +629,11 @@ class SanitizeTabMixin:
         if not lines:
             messagebox.showwarning("缺少参数", "请先输入要批量添加的敏感词。")
             return
+        if not self._confirm_edit_after_apply():
+            return
         if not self.current_mapping_data:
             self.current_mapping_data = {"version": 2, "source_file": "", "sanitized_file": "", "entries": []}
+        self._save_mapping_undo_snapshot()
         entries = self._mapping_entries()
         added = 0
         for line in lines:
@@ -550,6 +660,56 @@ class SanitizeTabMixin:
         self._update_sanitize_action_states()
         self.batch_add_text.delete("1.0", tk.END)
         self.log_queue.put(("sanitize", f"[INFO] 批量添加敏感词：新增 {added} 条"))
+
+    def _save_mapping_undo_snapshot(self) -> None:
+        self.mapping_undo_snapshot = copy.deepcopy(self.current_mapping_data) if self.current_mapping_data else None
+
+    def undo_mapping_change(self, event=None):
+        if not self.mapping_undo_snapshot:
+            self.log_queue.put(("sanitize", "[INFO] 当前没有可撤销的映射变更。"))
+            return "break"
+        self.current_mapping_data = copy.deepcopy(self.mapping_undo_snapshot)
+        self.mapping_undo_snapshot = None
+        self.scan_ready = True
+        self.mapping_applied = bool(str(self.current_mapping_data.get("sanitized_file", "")).strip()) if self.current_mapping_data else False
+        self._rebuild_mapping_metadata()
+        self._refresh_mapping_tree()
+        self.mapping_summary_var.set(self._mapping_summary_text())
+        self.sanitize_status_var.set("已撤销，需重新生成")
+        self._update_sanitize_action_states()
+        self.log_queue.put(("sanitize", "[INFO] 已撤销最近一次映射变更。"))
+        return "break"
+
+    def select_all_visible_mapping_entries(self, event=None):
+        children = self.mapping_tree.get_children()
+        if children:
+            self.mapping_tree.selection_set(children)
+        return "break"
+
+    def _compact_mapping_placeholders(self, log_changes: bool = False) -> dict[str, str]:
+        entries = self._mapping_entries()
+        if not entries:
+            return {}
+        changes = compact_entry_placeholders(entries)
+        if log_changes and changes:
+            preview = "；".join(f"{old}->{new}" for old, new in list(changes.items())[:12])
+            suffix = f"，其余 {len(changes) - 12} 项" if len(changes) > 12 else ""
+            self.log_queue.put(("sanitize", f"[INFO] 已整理映射编号 {len(changes)} 项：{preview}{suffix}"))
+        return changes
+
+    def _confirm_edit_after_apply(self) -> bool:
+        if not getattr(self, "mapping_applied", False):
+            return True
+        confirmed = messagebox.askyesno(
+            "已生成脱敏文档",
+            "当前映射已用于生成脱敏文档。\n\n如果继续修改分类、编号、启用状态或条目，之前生成的脱敏文档和映射将不再可靠。\n请放弃之前生成的文件，并重新生成脱敏文档。\n\n是否继续编辑？",
+        )
+        if not confirmed:
+            return False
+        self.mapping_applied = False
+        self.sanitize_status_var.set("已修改，需重新生成")
+        self.log_queue.put(("sanitize", "[WARN] 已修改已生成映射，请重新生成脱敏文档；旧输出文件不应再用于外部 AI 或还原。"))
+        return True
 
     def _parse_batch_line(self, line: str) -> tuple[str, str, str]:
         text = line.strip()
@@ -625,8 +785,22 @@ class SanitizeTabMixin:
                     }
                     if desired.upper() not in used:
                         return desired, category
-                return self._next_manual_placeholder(entries, category, exclude_index=exclude_index), category
+                return self._tail_placeholder(entries, category, exclude_index=exclude_index), category
         return self._next_manual_placeholder(entries, category, exclude_index=exclude_index), category
+
+    def _tail_placeholder(self, entries: list[dict[str, object]], category: str, exclude_index: int | None = None) -> str:
+        category = category.upper()
+        max_index = 0
+        for idx, item in enumerate(entries):
+            if exclude_index is not None and idx == exclude_index:
+                continue
+            placeholder = str(item.get("placeholder", "")).strip().upper()
+            if not placeholder.startswith(f"__{category}_"):
+                continue
+            match = re.search(r"_(\d{1,5})__", placeholder)
+            if match:
+                max_index = max(max_index, int(match.group(1)))
+        return f"__{category}_{max_index + 1:03d}__"
 
     @staticmethod
     def _infer_manual_category(placeholder: str, sensitive: str = "") -> str:

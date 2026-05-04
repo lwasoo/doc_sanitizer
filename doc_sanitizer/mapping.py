@@ -100,6 +100,28 @@ def refresh_payload_metadata(payload: dict[str, Any]) -> None:
     payload["replacements"] = {entry["placeholder"]: entry["original"] for entry in enabled_entries}
     payload["categories"] = {entry["placeholder"]: entry["category"] for entry in enabled_entries}
 
+def compact_entry_placeholders(entries: list[dict[str, Any]]) -> dict[str, str]:
+    normalized = normalize_entries(entries)
+    grouped: dict[str, list[tuple[bool, int, int, dict[str, Any]]]] = {}
+    for order, entry in enumerate(normalized):
+        category = str(entry.get("category", "MANUAL")).strip().upper() or "MANUAL"
+        grouped.setdefault(category, []).append(
+            (bool(entry.get("enabled", True)), parse_placeholder_index(str(entry.get("placeholder", ""))), order, entry)
+        )
+
+    changes: dict[str, str] = {}
+    for category, rows in grouped.items():
+        rows.sort(key=lambda item: (not item[0], item[1] if item[1] > 0 else 10**9, item[2]))
+        for new_index, (_enabled, _old_index, _order, entry) in enumerate(rows, start=1):
+            old_placeholder = str(entry.get("placeholder", "")).strip()
+            new_placeholder = f"__{category}_{new_index:03d}__"
+            if old_placeholder != new_placeholder:
+                changes[old_placeholder] = new_placeholder
+                entry["placeholder"] = new_placeholder
+
+    entries[:] = normalized
+    return changes
+
 def merge_entries(existing_entries: list[dict[str, Any]], candidates: list[tuple[str, str, str]]) -> list[dict[str, Any]]:
     merged = normalize_entries(existing_entries)
     existing_by_original = {normalize_text(entry["original"]): entry for entry in merged}

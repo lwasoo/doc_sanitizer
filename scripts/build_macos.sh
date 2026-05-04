@@ -25,11 +25,18 @@ echo "[INFO] Installing runtime/build dependencies..."
 "$PYTHON_BIN" -m pip install --no-cache-dir --upgrade pip
 "$PYTHON_BIN" -m pip install --no-cache-dir -r requirements.txt -r requirements-build.txt
 
+echo "[INFO] Cleaning old build artifacts..."
+rm -rf build dist
+
 ICON_PNG="$ROOT_DIR/assets/icon.png"
-ICON_ICNS="$ROOT_DIR/assets/icon.icns"
+ASSET_ICON_ICNS="$ROOT_DIR/assets/icon.icns"
+ICON_ICNS="$ROOT_DIR/build/icon.icns"
 ICONSET_DIR="$ROOT_DIR/build/icon.iconset"
 
-if [[ -f "$ICON_PNG" ]]; then
+if [[ -f "$ASSET_ICON_ICNS" ]]; then
+  ICON_ICNS="$ASSET_ICON_ICNS"
+  echo "[INFO] Using macOS icon: assets/icon.icns"
+elif [[ -f "$ICON_PNG" ]]; then
   echo "[INFO] Generating macOS icon from assets/icon.png..."
   rm -rf "$ICONSET_DIR"
   mkdir -p "$ICONSET_DIR"
@@ -48,9 +55,6 @@ else
   echo "[ERROR] Missing assets/icon.png; cannot build macOS app icon." >&2
   exit 1
 fi
-
-echo "[INFO] Cleaning old build artifacts..."
-rm -rf build dist
 
 echo "[INFO] Building macOS app bundle with PyInstaller..."
 "$PYTHON_BIN" -m PyInstaller \

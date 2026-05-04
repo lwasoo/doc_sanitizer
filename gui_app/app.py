@@ -84,6 +84,9 @@ class ConverterGUI(ConvertTabMixin, SanitizeTabMixin, RestoreTabMixin, PromptTab
         self.mapping_search_var = tk.StringVar()
         self.current_mapping_data: dict[str, object] | None = None
         self.scan_ready = False
+        self.mapping_applied = False
+        self.mapping_undo_snapshot: dict[str, object] | None = None
+        self.mapping_search_after_id: str | None = None
         self.mapping_editor: tk.Entry | None = None
         self.mapping_editor_item: str | None = None
         self.mapping_editor_column: str | None = None

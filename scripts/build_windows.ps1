@@ -25,30 +25,39 @@ Write-Host "[INFO] Stamping app version: $Version"
 Set-Content -Path (Join-Path $Root "gui_app\version.txt") -Value $Version -Encoding UTF8
 
 Write-Host "[INFO] Installing runtime/build dependencies..."
+$PreviousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $PythonExe -m pip cache purge *> $null
+$ErrorActionPreference = $PreviousErrorActionPreference
 & $PythonExe -m pip install --no-cache-dir --upgrade pip
 & $PythonExe -m pip install --no-cache-dir -r requirements.txt -r requirements-build.txt
 
+Write-Host "[INFO] Cleaning old build artifacts..."
+if (Test-Path ".\build") { Remove-Item ".\build" -Recurse -Force }
+if (Test-Path ".\dist") { Remove-Item ".\dist" -Recurse -Force }
+
 $IconPng = Join-Path $Root "assets\icon.png"
 $IconIco = Join-Path $Root "assets\icon.ico"
-if (Test-Path $IconPng) {
-  Write-Host "[INFO] Generating Windows icon from assets\icon.png..."
+if (Test-Path $IconIco) {
+  Write-Host "[INFO] Using Windows icon: assets\icon.ico"
+} elseif (Test-Path $IconPng) {
+  $IconIco = Join-Path $Root "build\icon.ico"
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $IconIco) | Out-Null
+  Write-Host "[INFO] assets\icon.ico not found; generating Windows icon from assets\icon.png..."
   @'
 from pathlib import Path
 from PIL import Image
 root = Path.cwd()
 icon_png = root / "assets" / "icon.png"
-icon_ico = root / "assets" / "icon.ico"
+icon_ico = root / "build" / "icon.ico"
 img = Image.open(icon_png).convert("RGBA")
 sizes = [(16, 16), (20, 20), (24, 24), (32, 32), (40, 40), (48, 48), (64, 64), (128, 128), (256, 256)]
 img.save(icon_ico, sizes=sizes)
 print(icon_ico)
 '@ | & $PythonExe -
+} else {
+  Write-Error "Missing assets\icon.ico and assets\icon.png; cannot build Windows app icon."
 }
-
-Write-Host "[INFO] Cleaning old build artifacts..."
-if (Test-Path ".\build") { Remove-Item ".\build" -Recurse -Force }
-if (Test-Path ".\dist") { Remove-Item ".\dist" -Recurse -Force }
 
 Write-Host "[INFO] Building Windows EXE with PyInstaller..."
 & $PythonExe -m PyInstaller `
