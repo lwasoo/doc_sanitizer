@@ -8,7 +8,10 @@ from pathlib import Path
 
 
 def load_app_version() -> str:
-    env_version = os.environ.get("MONTH_REPORT_CONVERTER_VERSION", "").strip()
+    env_version = (
+        os.environ.get("FILE_TOOLBOX_VERSION", "").strip()
+        or os.environ.get("MONTH_REPORT_CONVERTER_VERSION", "").strip()
+    )
     if env_version:
         return env_version.removeprefix("v").removeprefix("V")
     git_version = load_git_version()
@@ -45,7 +48,7 @@ def load_git_version() -> str:
 APP_NAME = "FileToolbox"
 APP_DISPLAY_NAME = "文件工具箱"
 APP_VERSION = load_app_version()
-GITHUB_REPO = "lwasoo/month_report_convert"
+GITHUB_REPO = "lwasoo/doc_sanitizer"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 DEFAULT_MODEL = "qwen2.5:7b-instruct-q4_K_M"

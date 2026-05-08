@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-VERSION="${MONTH_REPORT_CONVERTER_VERSION:-}"
+VERSION="${FILE_TOOLBOX_VERSION:-${MONTH_REPORT_CONVERTER_VERSION:-}}"
 if [[ -z "$VERSION" ]]; then
   VERSION="$(git describe --tags --abbrev=0 2>/dev/null || true)"
 fi

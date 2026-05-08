@@ -8,7 +8,10 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-$Version = $env:MONTH_REPORT_CONVERTER_VERSION
+$Version = $env:FILE_TOOLBOX_VERSION
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $Version = $env:MONTH_REPORT_CONVERTER_VERSION
+}
 if ([string]::IsNullOrWhiteSpace($Version)) {
   try {
     $Version = (& git describe --tags --abbrev=0 2>$null).Trim()
