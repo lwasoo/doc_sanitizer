@@ -65,6 +65,8 @@ echo "[INFO] Building macOS app bundle with PyInstaller..."
   --icon "$ICON_ICNS" \
   --hidden-import rapidocr_onnxruntime \
   --collect-data customtkinter \
+  --collect-data docx \
+  --collect-data pptx \
   --collect-all rapidocr_onnxruntime \
   --collect-all onnxruntime \
   --add-data "assets:assets" \
