@@ -31,6 +31,7 @@ def sanitizer_for(
     timeout_sec: int = 120,
     retries: int = 2,
     use_llm_assist: bool = True,
+    prompt_language: str = "auto",
 ) -> DocumentSanitizer:
     return DocumentSanitizer(
         model=model,
@@ -38,6 +39,7 @@ def sanitizer_for(
         timeout_sec=timeout_sec,
         retries=retries,
         use_llm_assist=use_llm_assist,
+        prompt_language=prompt_language,
     )
 
 
@@ -51,8 +53,9 @@ def sanitize_file(
     ollama_url: str = "http://127.0.0.1:11434",
     timeout_sec: int = 120,
     retries: int = 2,
+    prompt_language: str = "auto",
 ) -> MappingPayload:
-    return sanitizer_for(model, ollama_url, timeout_sec, retries, use_llm_assist).sanitize(
+    return sanitizer_for(model, ollama_url, timeout_sec, retries, use_llm_assist, prompt_language).sanitize(
         input_path=input_path,
         output_path=output_path,
         mapping_path=mapping_path,
@@ -70,8 +73,9 @@ def scan_file(
     retries: int = 2,
     existing_mapping_path: Path | None = None,
     existing_payload: MappingLike | None = None,
+    prompt_language: str = "auto",
 ) -> MappingPayload:
-    return sanitizer_for(model, ollama_url, timeout_sec, retries, use_llm_assist).scan(
+    return sanitizer_for(model, ollama_url, timeout_sec, retries, use_llm_assist, prompt_language).scan(
         input_path=input_path,
         custom_terms=custom_terms,
         existing_mapping_path=existing_mapping_path,
@@ -89,6 +93,7 @@ def sanitize_docx(
     ollama_url: str = "http://127.0.0.1:11434",
     timeout_sec: int = 120,
     retries: int = 2,
+    prompt_language: str = "auto",
 ) -> MappingPayload:
     return sanitize_file(
         input_path=input_path,
@@ -100,6 +105,7 @@ def sanitize_docx(
         ollama_url=ollama_url,
         timeout_sec=timeout_sec,
         retries=retries,
+        prompt_language=prompt_language,
     )
 
 
@@ -113,6 +119,7 @@ def scan_docx(
     retries: int = 2,
     existing_mapping_path: Path | None = None,
     existing_payload: MappingLike | None = None,
+    prompt_language: str = "auto",
 ) -> MappingPayload:
     return scan_file(
         input_path=input_path,
@@ -124,4 +131,5 @@ def scan_docx(
         retries=retries,
         existing_mapping_path=existing_mapping_path,
         existing_payload=existing_payload,
+        prompt_language=prompt_language,
     )

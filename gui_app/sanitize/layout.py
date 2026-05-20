@@ -76,11 +76,20 @@ class SanitizeLayout:
         self.sanitize_model_combo = ttk.Combobox(model_row, textvariable=self.model_var)
         self.sanitize_model_combo.grid(row=0, column=0, sticky="ew")
         ttk.Button(model_row, text="检测模型", style="Secondary.TButton", command=self.detect_models).grid(row=0, column=1, padx=(8, 0))
+        ttk.Label(strategy_group, text="Prompt 语言", style="Field.TLabel").grid(row=3, column=0, sticky="w", pady=6)
+        self.sanitize_prompt_language_combo = ttk.Combobox(
+            strategy_group,
+            textvariable=self.sanitize_prompt_language_var,
+            values=("自动", "中文", "English"),
+            state="readonly",
+            width=14,
+        )
+        self.sanitize_prompt_language_combo.grid(row=3, column=1, sticky="w", pady=6)
         ttk.Label(
             strategy_group,
             text="建议流程：先识别候选 -> 审核映射 -> 再生成脱敏文档。",
             style="Hint.TLabel",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         log_group = ttk.LabelFrame(left_card, text="运行日志", style="Section.TLabelframe", padding=14)
         log_group.grid(row=2, column=0, sticky="nsew", pady=(14, 0))

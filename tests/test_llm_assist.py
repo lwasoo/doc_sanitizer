@@ -10,11 +10,15 @@ import unittest
 
 from doc_sanitizer.llm_assist import (
     build_llm_candidate_contexts,
+    build_llm_candidate_prompt,
     chunk_texts_for_llm,
+    choose_llm_prompt_language,
     count_texts_with_existing_terms,
+    extract_candidates_from_llm_payload,
     select_texts_for_llm,
     stable_text_hash,
 )
+from doc_sanitizer.patterns import match_candidates_in_text
 
 
 class LlmAssistPerformanceTests(unittest.TestCase):
@@ -73,6 +77,99 @@ class LlmAssistPerformanceTests(unittest.TestCase):
         )
 
         self.assertEqual(count, 2)
+
+    def test_english_prompt_is_used_for_english_heavy_text(self) -> None:
+        # 英文模型/英文文档用英文指令，减少小模型跨语言理解损耗。
+        chunk = [
+            "Acme Technology Co Ltd signed Project Phoenix contract TECH-2026-001 with Beta Legal LLP.",
+        ]
+
+        language = choose_llm_prompt_language(chunk, model="phi4-mini:3.8b")
+        prompt = build_llm_candidate_prompt(chunk, language=language)
+
+        self.assertEqual(language, "en")
+        self.assertIn("Identify sensitive entities", prompt)
+        self.assertIn('"candidates"', prompt)
+
+    def test_chinese_prompt_remains_default_for_qwen_chinese_text(self) -> None:
+        # 中文文档和 Qwen 系列仍使用中文指令，保持现有主路径行为。
+        chunk = ["客户：某某科技有限公司，项目：智慧园区平台，合同编号：ZH-2026-001。"]
+
+        language = choose_llm_prompt_language(chunk, model="qwen2.5:7b-instruct-q4_K_M")
+        prompt = build_llm_candidate_prompt(chunk, language=language)
+
+        self.assertEqual(language, "zh")
+        self.assertIn("请从下面文本中识别", prompt)
+        self.assertIn('"candidates"', prompt)
+
+    def test_prompt_language_preference_overrides_auto_detection(self) -> None:
+        # UI 手动选择语言时，应允许中文文档用英文 prompt 做 A/B 测试。
+        chunk = ["客户：某某科技有限公司，项目：智慧园区平台，合同编号：ZH-2026-001。"]
+
+        self.assertEqual(choose_llm_prompt_language(chunk, model="phi4-mini:3.8b", preference="en"), "en")
+        self.assertEqual(choose_llm_prompt_language(chunk, model="phi4-mini:3.8b", preference="zh"), "zh")
+
+    def test_llm_payload_filters_sentence_like_and_generic_candidates(self) -> None:
+        # 精度回归用例：小模型有时会返回整句或“客户/供应商”这类角色词，不能进入映射表。
+        candidates = extract_candidates_from_llm_payload(
+            {
+                "candidates": [
+                    {"text": "X项目的自动化设备供应商为集团内部供应商协讯自动化", "category": "SUPPLIER"},
+                    {"text": "客户", "category": "CUSTOMER"},
+                    {"text": "协讯自动化", "category": "SUPPLIER"},
+                ]
+            }
+        )
+
+        self.assertEqual(candidates, [("SUPPLIER", "协讯自动化", "llm")])
+
+    def test_llm_payload_splits_merged_person_names(self) -> None:
+        # 精度回归用例：模型把多个人名合并返回时，拆成独立候选，便于映射审核。
+        candidates = extract_candidates_from_llm_payload(
+            {"candidates": [{"text": "张三和李四", "category": "PERSON"}]}
+        )
+
+        self.assertEqual(candidates, [("PERSON", "张三", "llm"), ("PERSON", "李四", "llm")])
+
+    def test_llm_payload_accepts_amounts_but_rejects_contextless_numbers(self) -> None:
+        # 金额可以脱敏，但普通年份、页码、比例和无上下文纯数字不应进入映射表。
+        candidates = extract_candidates_from_llm_payload(
+            {
+                "candidates": [
+                    {"text": "人民币 1,200 万元", "category": "AMOUNT"},
+                    {"text": "USD 500,000", "category": "AMOUNT"},
+                    {"text": "2026", "category": "AMOUNT"},
+                    {"text": "35%", "category": "AMOUNT"},
+                    {"text": "第 12 页", "category": "AMOUNT"},
+                ]
+            }
+        )
+
+        self.assertEqual(
+            candidates,
+            [
+                ("AMOUNT", "人民币 1,200 万元", "llm"),
+                ("AMOUNT", "USD 500,000", "llm"),
+            ],
+        )
+
+    def test_rule_extraction_catches_currency_prefixed_amounts(self) -> None:
+        # 规则层应兜底抓住 MOU 里常见的 USD 金额，不依赖模型一定返回 AMOUNT。
+        candidates = match_candidates_in_text(
+            "Luxshare agrees to invest approximately USD 4,000,000. "
+            "Orders shall total not less than USD 20,000,000."
+        )
+
+        self.assertIn(("AMOUNT", "USD 4,000,000", "auto"), candidates)
+        self.assertIn(("AMOUNT", "USD 20,000,000", "auto"), candidates)
+
+    def test_llm_payload_rejects_unknown_categories(self) -> None:
+        # 模型可能创造 STATE_NAME 等类别；未列入映射类别的结果不应进入表格。
+        candidates = extract_candidates_from_llm_payload(
+            {"candidates": [{"text": "Delaware", "category": "STATE_NAME"}]}
+        )
+
+        self.assertEqual(candidates, [])
 
 
 if __name__ == "__main__":

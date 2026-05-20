@@ -23,6 +23,7 @@ def collect_llm_candidates(
     ollama_url: str,
     timeout_sec: int,
     retries: int,
+    prompt_language: str = "auto",
     rule_candidates: list[tuple[str, str, str]] | None = None,
     existing_terms: set[str] | None = None,
 ) -> list[tuple[str, str, str]]:
@@ -30,8 +31,17 @@ def collect_llm_candidates(
     existing_terms = {normalize_text(term) for term in (existing_terms or set()) if normalize_text(term)}
     selected_texts = select_texts_for_llm(texts, max_texts=96, existing_terms=existing_terms)
     excluded_existing = count_texts_with_existing_terms(texts, existing_terms)
-    cached_payloads = [LLM_RESPONSE_CACHE[stable_text_hash(text)] for text in selected_texts if stable_text_hash(text) in LLM_RESPONSE_CACHE]
-    llm_texts = [text for text in selected_texts if stable_text_hash(text) not in LLM_RESPONSE_CACHE]
+    text_languages = {text: choose_llm_prompt_language([text], model, prompt_language) for text in selected_texts}
+    cached_payloads = [
+        LLM_RESPONSE_CACHE[llm_cache_key(text, model, text_languages[text])]
+        for text in selected_texts
+        if llm_cache_key(text, model, text_languages[text]) in LLM_RESPONSE_CACHE
+    ]
+    llm_texts = [
+        text
+        for text in selected_texts
+        if llm_cache_key(text, model, text_languages[text]) not in LLM_RESPONSE_CACHE
+    ]
     chunks = chunk_texts_for_llm(llm_texts, max_chars=1800, max_items=16, max_chunks=12)
     log(
         "AI 辅助识别准备: "
@@ -44,16 +54,18 @@ def collect_llm_candidates(
         candidates.extend(extract_candidates_from_llm_payload(payload))
     for idx, chunk in enumerate(chunks, start=1):
         log(f"AI 辅助识别分段 {idx}/{len(chunks)}")
-        prompt = build_llm_candidate_prompt(chunk)
+        chunk_prompt_language = choose_llm_prompt_language(chunk, model, prompt_language)
+        prompt = build_llm_candidate_prompt(chunk, language=chunk_prompt_language)
         payload = call_ollama_candidate_json(
             ollama_url=ollama_url,
             model=model,
             prompt=prompt,
+            prompt_language=chunk_prompt_language,
             timeout_sec=timeout_sec,
             retries=retries,
         )
         for context in chunk:
-            LLM_RESPONSE_CACHE[stable_text_hash(context)] = payload
+            LLM_RESPONSE_CACHE[llm_cache_key(context, model, chunk_prompt_language)] = payload
         candidates.extend(extract_candidates_from_llm_payload(payload))
     deduped: dict[str, tuple[str, str]] = {}
     for category, value, source in sorted(candidates, key=lambda item: len(item[1]), reverse=True):
@@ -64,11 +76,42 @@ def collect_llm_candidates(
 
 
 LLM_RESPONSE_CACHE: dict[str, dict[str, Any]] = {}
+LLM_ALLOWED_CATEGORIES = {"COMPANY", "PERSON", "PROJECT", "CASE", "CODE", "CUSTOMER", "SUPPLIER", "TITLE", "AMOUNT"}
 
 
 def stable_text_hash(text: str) -> str:
     """Hash normalized text so semantically identical snippets share cache entries."""
     return hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
+
+
+def llm_cache_key(text: str, model: str, prompt_language: str) -> str:
+    """Cache model responses without mixing different models or prompt languages."""
+    normalized_model = normalize_text(model).lower()
+    return hashlib.sha256(f"{prompt_language}\0{normalized_model}\0{normalize_text(text)}".encode("utf-8")).hexdigest()
+
+
+def choose_llm_prompt_language(chunk: list[str], model: str = "", preference: str = "auto") -> str:
+    """Choose Chinese or English instructions while keeping the output schema identical."""
+    normalized_preference = preference.strip().lower()
+    if normalized_preference in {"zh", "cn", "chinese", "中文"}:
+        return "zh"
+    if normalized_preference in {"en", "english", "英文"}:
+        return "en"
+    text = "\n".join(chunk)
+    chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    english_letters = len(re.findall(r"[A-Za-z]", text))
+    model_name = model.lower()
+    english_first_models = ("phi", "llama", "gemma", "mistral", "mixtral")
+    chinese_first_models = ("qwen", "yi", "deepseek")
+    if english_letters >= max(40, chinese_chars * 3):
+        return "en"
+    if chinese_chars >= max(20, english_letters // 2):
+        return "zh"
+    if any(name in model_name for name in english_first_models):
+        return "en"
+    if any(name in model_name for name in chinese_first_models):
+        return "zh"
+    return "zh"
 
 
 def count_texts_with_existing_terms(texts: list[str], existing_terms: set[str]) -> int:
@@ -83,10 +126,50 @@ def extract_candidates_from_llm_payload(payload: dict[str, Any]) -> list[tuple[s
         if not isinstance(row, dict):
             continue
         category = normalize_text(str(row.get("category", "")).upper()) or "MANUAL"
-        original = clean_candidate_value(normalize_text(str(row.get("text", ""))), category)
-        if is_valid_candidate(original, category):
-            candidates.append((category, original, "llm"))
+        if category not in LLM_ALLOWED_CATEGORIES:
+            continue
+        raw_original = clean_candidate_value(normalize_text(str(row.get("text", ""))), category)
+        if is_sentence_like_llm_candidate(raw_original, category):
+            continue
+        for original in split_llm_candidate_value(raw_original, category):
+            original = clean_candidate_value(original, category)
+            if is_valid_candidate(original, category):
+                candidates.append((category, original, "llm"))
     return candidates
+
+
+def split_llm_candidate_value(value: str, category: str) -> list[str]:
+    """Split model-merged short person names while leaving organization names intact."""
+    value = normalize_text(value)
+    if not value:
+        return []
+    if category != "PERSON":
+        return [value]
+    parts = [
+        normalize_text(part)
+        for part in re.split(r"\s*(?:和|与|及|、|,|，|/|&)\s*", value)
+        if normalize_text(part)
+    ]
+    if len(parts) <= 1:
+        return [value]
+    return parts
+
+
+def is_sentence_like_llm_candidate(value: str, category: str) -> bool:
+    """Reject LLM outputs that copied a clause instead of returning a short entity."""
+    value = normalize_text(value)
+    if not value:
+        return True
+    if len(value) >= 18 and re.search(r"[的是为由将已把被对向与和及包括负责提供签署采购销售合作沟通]", value):
+        return True
+    if category in {"COMPANY", "PROJECT", "SUPPLIER", "CUSTOMER"} and re.search(
+        r"(?:供应商为|客户为|项目为|公司为|主体为|负责人为|为集团|为公司|的自动化|的供应商|的客户|内部供应商)",
+        value,
+    ):
+        return True
+    if category == "PERSON" and re.search(r"(?:负责人|联系人|申请人|被申请人|原告|被告).{2,}", value):
+        return True
+    return False
 
 
 def build_llm_candidate_contexts(
@@ -194,10 +277,27 @@ def chunk_texts_for_llm(texts: list[str], max_chars: int = 1800, max_items: int 
     return chunks[:max_chunks]
 
 
-def build_llm_candidate_prompt(chunk: list[str], candidate_mode: bool = False) -> str:
+def build_llm_candidate_prompt(chunk: list[str], candidate_mode: bool = False, language: str = "zh") -> str:
     """Build the extraction prompt; example JSON is intentionally separated from input text."""
     numbered = "\n".join(f"{idx + 1}. {line}" for idx, line in enumerate(chunk))
     if candidate_mode:
+        if language == "en":
+            return f"""Review the following "candidate + context" items. Decide which candidates truly need sanitization, and add any clearly missing short entities from the same context. Output strict JSON only.
+
+Rules:
+1. Prefer real sensitive entities from the candidate list; do not return generic, descriptive, or non-sensitive terms.
+2. Correct category when the candidate category is wrong.
+3. Return only short entities that appear verbatim in the text. Do not rewrite, translate, infer, or invent.
+4. If uncertain, do not return the item.
+5. category must be one of: COMPANY, PERSON, PROJECT, CASE, CODE, CUSTOMER, SUPPLIER, TITLE, AMOUNT.
+6. Do not return generic role labels, clauses, or multiple people merged into one string.
+7. Numbers related to amounts, prices, payments, budgets, contract values, transaction values, costs, or fees may be returned as AMOUNT. Ordinary years, page numbers, indexes, percentages, and contextless pure numbers must not be returned.
+
+Output format: {{"candidates":[{{"text":"<sensitive entity exactly as written in the source text>","category":"COMPANY"}}]}}
+
+Items to review:
+{numbered}
+"""
         return f"""请审核下面的“候选 + 上下文”，判断哪些候选确实需要脱敏，并可补充同一上下文中明显遗漏的短实体。输出严格 JSON。
 
 规则：
@@ -205,24 +305,52 @@ def build_llm_candidate_prompt(chunk: list[str], candidate_mode: bool = False) -
 2. 如果候选类别不准，可以修正 category。
 3. 只返回文本中真实出现的短实体，不要改写，不要杜撰。
 4. 如果不确定，不要返回。
-5. category 只能是：COMPANY、PERSON、PROJECT、CASE、CODE、CUSTOMER、SUPPLIER、TITLE。
+5. category 只能是：COMPANY、PERSON、PROJECT、CASE、CODE、CUSTOMER、SUPPLIER、TITLE、AMOUNT。
+6. 不要返回通用角色词、句子型候选，或把多个人名合并成一个候选。
+7. 涉及金额、报价、付款、预算、合同价、交易金额、成本或费用的数字可以按 AMOUNT 返回；普通年份、页码、序号、比例和无上下文的纯数字不要返回。
 
 输出格式：{{"candidates":[{{"text":"<原文中的敏感实体>","category":"COMPANY"}}]}}
 
 待审核内容：
 {numbered}
 """
+    if language == "en":
+        return f"""Identify sensitive entities that should be sanitized from the text below. Output strict JSON only.
+
+Rules:
+1. Extract only text that appears verbatim in the source. Do not rewrite, translate, infer, or invent entities.
+2. Prioritize company names, English company names, law firms, people, project names, case numbers, contract numbers, customers, suppliers, codes, sensitive titles, and sensitive amounts.
+3. Return short entities only. Do not return full sentences or explanatory phrases.
+4. If uncertain, do not return the item.
+5. category must be one of: COMPANY, PERSON, PROJECT, CASE, CODE, CUSTOMER, SUPPLIER, TITLE, AMOUNT.
+6. Law firms, legal organizations, and named institutions should be returned as COMPANY.
+7. Do not treat generic legal or contract terms as sensitive entities, such as Effective Date, Commitment Period, State of Delaware, Memorandum of Understanding.
+8. Numbers related to amounts, prices, payments, budgets, contract values, transaction values, costs, or fees may be returned as AMOUNT.
+9. Do not return ordinary years, page numbers, indexes, percentages, common legal phrases, state names, place names, or contextless pure numbers.
+
+Output format:
+{{"candidates":[{{"text":"<sensitive entity exactly as written in the source text>","category":"COMPANY"}}]}}
+
+Important:
+1. The output format above is only an example. It is not candidate content.
+2. Never return example words, placeholders, or entities you invented.
+3. Keep original spelling, capitalization, punctuation, and spacing exactly as they appear in the source text.
+
+Text to inspect:
+{numbered}
+"""
     return f"""请从下面文本中识别需要脱敏的敏感实体，并输出严格 JSON。
 
 规则：
 1. 只抽取文本中真实出现的原文，不改写，不杜撰。
-2. 优先识别：公司主体、英文公司名、律所、人名、项目名、案号、合同编号、客户、供应商、代码、标题。
+2. 优先识别：公司主体、英文公司名、律所、人名、项目名、案号、合同编号、客户、供应商、代码、标题、敏感金额。
 3. 只返回短实体，不要返回整句描述。
 4. 如果不确定，不要返回。
-5. category 只能是：COMPANY、PERSON、PROJECT、CASE、CODE、CUSTOMER、SUPPLIER、TITLE。
+5. category 只能是：COMPANY、PERSON、PROJECT、CASE、CODE、CUSTOMER、SUPPLIER、TITLE、AMOUNT。
 6. 律所、legal 或英文机构名称，也按 COMPANY 返回。
 7. 不要把通用法律或合同术语当作敏感实体，例如 Effective Date、Commitment Period、State of Delaware、Memorandum of Understanding。
-8. 纯数字、常见法务短语、州名/地名如果没有明确敏感含义，不要返回。
+8. 涉及金额、报价、付款、预算、合同价、交易金额、成本或费用的数字可以按 AMOUNT 返回。
+9. 普通年份、页码、序号、比例、常见法务短语、州名/地名和无上下文的纯数字不要返回。
 
 输出格式：
 {{"candidates":[{{"text":"<原文中的敏感实体>","category":"COMPANY"}}]}}
@@ -250,11 +378,15 @@ def call_ollama_candidate_json(
     ollama_url: str,
     model: str,
     prompt: str,
+    prompt_language: str,
     timeout_sec: int,
     retries: int,
 ) -> dict[str, Any]:
     """Call Ollama using chat first and generate as a fallback, always requesting JSON."""
-    system_prompt = "你是企业文档脱敏助手。只能输出严格 JSON，只抽取明确敏感实体，禁止返回整句。"
+    if prompt_language == "en":
+        system_prompt = "You are an enterprise document sanitization assistant. Output strict JSON only. Extract only clear sensitive entities and never return full sentences."
+    else:
+        system_prompt = "你是企业文档脱敏助手。只能输出严格 JSON，只抽取明确敏感实体，禁止返回整句。"
     endpoints = [
         ("chat", f"{ollama_url.rstrip('/')}/api/chat"),
         ("generate", f"{ollama_url.rstrip('/')}/api/generate"),

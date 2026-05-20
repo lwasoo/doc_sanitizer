@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-llm-assist", dest="use_llm_assist", action="store_false", help="Disable local Ollama assist and use rules only")
     parser.add_argument("--model", default="qwen2.5:7b-instruct-q4_K_M", help="Ollama model name for sanitize assist")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434", help="Ollama base URL")
+    parser.add_argument("--prompt-language", choices=["auto", "zh", "en"], default="auto", help="Prompt language for sanitize assist: auto, zh, or en (default: auto)")
     parser.add_argument("--timeout", type=int, default=120, help="Ollama timeout seconds")
     parser.add_argument("--retries", type=int, default=2, help="Ollama retry count")
     return parser.parse_args()
@@ -50,6 +51,7 @@ def main() -> int:
                 use_llm_assist=args.use_llm_assist,
                 model=args.model,
                 ollama_url=args.ollama_url,
+                prompt_language=args.prompt_language,
                 timeout_sec=args.timeout,
                 retries=args.retries,
             )

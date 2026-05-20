@@ -64,8 +64,17 @@ class SanitizeActions:
             "ollama_url": self.ollama_url_var.get().strip() or DEFAULT_OLLAMA_URL,
             "timeout_sec": int(self.timeout_var.get().strip() or "120"),
             "retries": int(self.retries_var.get().strip() or "2"),
+            "prompt_language": self._scan_prompt_language(),
             "existing_payload": copy.deepcopy(self.current_mapping_data),
         }
+
+    def _scan_prompt_language(self) -> str:
+        value = self.sanitize_prompt_language_var.get().strip().lower()
+        if value in {"中文", "zh", "chinese"}:
+            return "zh"
+        if value in {"english", "英文", "en"}:
+            return "en"
+        return "auto"
 
     def _scan_mapping_worker(self, params: dict[str, object]) -> None:
         input_path = params["input_path"]
@@ -80,6 +89,7 @@ class SanitizeActions:
             ollama_url=str(params["ollama_url"]),
             timeout_sec=int(params["timeout_sec"]),
             retries=int(params["retries"]),
+            prompt_language=str(params["prompt_language"]),
             existing_mapping_path=existing_map_path if existing_map_path.exists() else None,
             existing_payload=params["existing_payload"] if params["existing_payload"] is not None else None,
         )

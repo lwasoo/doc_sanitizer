@@ -58,6 +58,7 @@ class SanitizeTabController(SanitizeLayout, SanitizeActions, SanitizeMappingTabl
         self.sanitize_mapping_var = tk.StringVar()
         self.sanitize_status_var = tk.StringVar(value="等待识别")
         self.sanitize_use_llm_var = tk.BooleanVar(value=True)
+        self.sanitize_prompt_language_var = tk.StringVar(value="自动")
         self.manual_sensitive_var = tk.StringVar()
         self.manual_placeholder_var = tk.StringVar()
         self.mapping_search_var = tk.StringVar()

@@ -22,6 +22,7 @@ class DocumentSanitizer:
     timeout_sec: int = 120
     retries: int = 2
     use_llm_assist: bool = True
+    prompt_language: str = "auto"
 
     def sanitize(
         self,
@@ -57,6 +58,7 @@ class DocumentSanitizer:
             ollama_url=self.ollama_url,
             timeout_sec=self.timeout_sec,
             retries=self.retries,
+            prompt_language=self.prompt_language,
             existing_mapping_path=existing_mapping_path,
             existing_payload=existing_payload,
         )

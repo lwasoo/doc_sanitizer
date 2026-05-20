@@ -28,6 +28,7 @@ def build_mapping_payload(
     timeout_sec: int,
     retries: int,
     existing_entries_override: list[EntryLike] | None = None,
+    prompt_language: str = "auto",
 ) -> MappingPayload:
     existing_entries: list[EntryLike] = []
     if existing_entries_override is not None:
@@ -50,6 +51,7 @@ def build_mapping_payload(
                 ollama_url=ollama_url,
                 timeout_sec=timeout_sec,
                 retries=retries,
+                prompt_language=prompt_language,
                 rule_candidates=candidates,
                 existing_terms=existing_terms,
             )
@@ -94,6 +96,7 @@ def scan_file_payload(
     retries: int = 2,
     existing_mapping_path: Path | None = None,
     existing_payload: MappingLike | None = None,
+    prompt_language: str = "auto",
 ) -> MappingPayload:
     ensure_supported_path(input_path)
     output_path = default_sanitized_path(input_path)
@@ -112,6 +115,7 @@ def scan_file_payload(
         timeout_sec=timeout_sec,
         retries=retries,
         existing_entries_override=existing_entries,
+        prompt_language=prompt_language,
     )
     if existing_payload:
         payload.source_file = str(input_path)

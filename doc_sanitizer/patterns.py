@@ -80,12 +80,36 @@ ENGLISH_GENERIC_TERMS = {
     "CONFIDENTIAL INFORMATION",
 }
 
+GENERIC_ROLE_VALUES = {
+    "客户",
+    "供应商",
+    "公司",
+    "项目",
+    "人员",
+    "联系人",
+    "申请人",
+    "被申请人",
+    "原告",
+    "被告",
+    "甲方",
+    "乙方",
+    "CUSTOMER",
+    "SUPPLIER",
+    "COMPANY",
+    "PROJECT",
+    "CONTACT",
+    "CLIENT",
+    "VENDOR",
+}
+
 PLACEHOLDER_PATTERNS: list[tuple[str, str]] = [
     ("COMPANY", rf"[\u4e00-\u9fffA-Za-z0-9（）()·&\-_]{{2,18}}(?:{COMPANY_SUFFIX_PATTERN})"),
     ("COMPANY", r"\b[A-Z][A-Za-z&.\-]+(?:\s+[A-Z][A-Za-z&.\-]+){0,5}\s+(?:Legal|Technology|Technologies|Group|Holdings|Partners|Botts|Ltd|LTD|Inc|INC|LLC|PTE|Corp|Corporation|Company)\b"),
     ("COMPANY", r"[A-Za-z\u4e00-\u9fff]{2,24}(?:律师事务所|律所)"),
     ("TITLE", r"《[^》]{2,80}》"),
-    ("AMOUNT", r"(?:人民币|USD|RMB|美元)?\s*\d[\d,]*(?:\.\d+)?\s*(?:亿元|万元|元|万美元|美元)"),
+    ("AMOUNT", r"(?:人民币|美元|港币|欧元|日元)\s*\d[\d,]*(?:\.\d+)?\s*(?:亿元|万元|元|万美元|美元|港元|欧元|日元)?"),
+    ("AMOUNT", r"\b(?:USD|RMB|CNY|HKD|EUR|JPY)\s*\d[\d,]*(?:\.\d+)?\b"),
+    ("AMOUNT", r"[$￥]\s*\d[\d,]*(?:\.\d+)?\b"),
     ("ACCOUNT", r"\b\d{12,24}\b"),
     ("EMAIL", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     ("PHONE", r"\b1[3-9]\d{9}\b"),
@@ -157,12 +181,32 @@ def clean_candidate_value(value: str, category: str) -> str:
         return ""
     return value
 
+def is_amount_like(value: str) -> bool:
+    value = normalize_text(value)
+    if re.fullmatch(r"(?:第\s*)?\d+\s*(?:页|page|pages|%)", value, re.IGNORECASE):
+        return False
+    if re.search(r"(?:人民币|美元|港币|欧元|日元|USD|RMB|CNY|HKD|EUR|JPY|\$|￥)", value, re.IGNORECASE):
+        return bool(re.search(r"\d", value))
+    if re.search(r"\d[\d,]*(?:\.\d+)?\s*(?:亿元|万元|元|万美元|美元|港元|欧元|日元|million|billion|thousand|yuan|dollars?)\b", value, re.IGNORECASE):
+        return True
+    if re.search(r"(?:金额|报价|付款|预算|合同价|交易金额|费用|价款|price|payment|budget|fee|cost|amount|value)", value, re.IGNORECASE):
+        return bool(re.search(r"\d", value))
+    return False
+
 def is_valid_candidate(value: str, category: str) -> bool:
     value = normalize_text(value)
     if len(value) < 2:
         return False
+    if value.upper() in GENERIC_ROLE_VALUES:
+        return False
     if any(char in value for char in "\n\t"):
         return False
+    if category == "AMOUNT":
+        if not is_amount_like(value):
+            return False
+        if len(value) > 40:
+            return False
+        return True
     if sum(value.count(mark) for mark in "，,。；;！？!?") > 0:
         return False
     if category == "COMPANY":

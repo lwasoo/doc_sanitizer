@@ -321,6 +321,7 @@ class SanitizeTabNumberingTests(unittest.TestCase):
             "ollama_url": "http://127.0.0.1:11434",
             "timeout_sec": 120,
             "retries": 2,
+            "prompt_language": "en",
             "existing_payload": existing,
         }
 
@@ -328,6 +329,7 @@ class SanitizeTabNumberingTests(unittest.TestCase):
             tab._scan_mapping_worker(params)
 
         self.assertIs(scan_mock.call_args.kwargs["existing_payload"], existing)
+        self.assertEqual(scan_mock.call_args.kwargs["prompt_language"], "en")
         self.assertEqual(completed, [result])
 
 

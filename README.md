@@ -208,6 +208,34 @@ python -m pip install -r requirements.txt
 python gui_converter.py
 ```
 
+命令行脱敏：
+
+```powershell
+python sanitize_docx.py sanitize --input source.docx --output source_sanitized.docx --mapping mapping.json --prompt-language auto
+```
+
+命令行还原：
+
+```powershell
+python sanitize_docx.py restore --input ai_output.docx --output restored.docx --mapping mapping.json
+```
+
+`--prompt-language` 只影响本地模型辅助识别的提示词语言，可选 `auto`、`zh`、`en`，默认 `auto`。英文合同或英文模型效果不稳定时，可以显式指定 `--prompt-language en`；中文材料可指定 `--prompt-language zh`。
+
+`auto` 会按文本和模型名自动选择提示词语言：
+
+- 英文字母明显多于中文时使用英文提示词。
+- 中文字符明显占优时使用中文提示词。
+- 文本语言不明显时，`phi`、`llama`、`gemma`、`mistral`、`mixtral` 系列模型优先使用英文提示词。
+- `qwen`、`yi`、`deepseek` 系列模型优先使用中文提示词。
+- 仍无法判断时默认中文提示词。
+
+英文合同或英文为主的材料，推荐使用 英文训练的模型 并指定英文提示词：
+
+```powershell
+python sanitize_docx.py sanitize --input contract.docx --output contract_sanitized.docx --mapping mapping.json --model phi4-mini --prompt-language en
+```
+
 运行测试：
 
 ```powershell
